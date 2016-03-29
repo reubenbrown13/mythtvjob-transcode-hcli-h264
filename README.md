@@ -1,6 +1,8 @@
 # mythtvjob-transcode-hcli-h264
 Mythtv User job that allows for easy conversion and replacement of the source file w/ a mp4.
 
+This is based on the [Transcode Mpeg2 to H264](https://www.mythtv.org/wiki/Transcode_Mpeg2_to_H264) job found in the [Mythtv.org Wiki](https://www.mythtv.org/wiki)
+
 This script depends on:
 * Mythtv
 * HandBrakeCLI
