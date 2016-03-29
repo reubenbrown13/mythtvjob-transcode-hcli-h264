@@ -31,6 +31,7 @@
 #         maxWidth/maxHeight to be setup.
 # - added subtitles to be saved in the file
 # - added output file name to be of show title and either startdate, airdate, or Season/Episode
+# - added save of metadata to outfile.
 #
 from MythTV import Job, Recorded, System, MythDB, findfile, MythError, MythLog, datetime
 
@@ -39,6 +40,7 @@ from glob import glob
 from shutil import copyfile
 import sys
 import os
+import subprocess
 import errno
 import threading, time
 from datetime import timedelta
@@ -622,13 +624,13 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
     
     # Add Metadata to outfile based on the data in the rec object
     if debug:
-        print 'Adding metadata to the outfile: AtomicParsley {} --title "{}" --genre "{}" --year "{}" --TVShowName "{}" --TVSeasonNum "{}" --TVEpisodeNum "{}" --TVEpisode "{}" --comment "{}" --description "{}" --longdesc "{}" --overWrite'.format(outfile, rec.title, rec.category, rec.originalairdate, rec.title, rec.season, rec.episode, rec.programid, rec.subtitle, rec.subtitle, rec.description)
+        print 'Adding metadata to the outfile: AtomicParsley "{}" --title "{}" --genre "{}" --year "{}" --TVShowName "{}" --TVSeasonNum "{}" --TVEpisodeNum "{}" --TVEpisode "{}" --comment "{}" --description "{}" --longdesc "{}" --overWrite'.format(outfile, rec.title.encode('utf-8').strip(), rec.category, rec.originalairdate, rec.title.encode('utf-8').strip(), rec.season, rec.episode, rec.programid, rec.subtitle.encode('utf-8').strip(), rec.subtitle.encode('utf-8').strip(), rec.description.encode('utf-8').strip())
+
     if jobid:
         progress_str = 'Adding metadata to the outfile.'
         job.update({'status':job.RUNNING, 'comment': progress_str})
 
-    metatask = System(path='/usr/bin/AtomicParsley', db=db)
-    metaoutput = metatask(' {} --title "{}" --genre "{}" --year "{}" --TVShowName "{}" --TVSeasonNum "{}" --TVEpisodeNum "{}" --TVEpisode "{}" --comment "{}" --description "{}" --longdesc "{}" --overWrite').format(outfile, rec.title, rec.category, rec.originalairdate, rec.title, rec.season, rec.episode, rec.programid, rec.subtitle, rec.subtitle, rec.description)
+    metatask = subprocess.call(['/usr/bin/AtomicParsley', ' "{}" --title "{}" --genre "{}" --year "{}" --TVShowName "{}" --TVSeasonNum "{}" --TVEpisodeNum "{}" --TVEpisode "{}" --comment "{}" --description "{}" --longdesc "{}" --overWrite'.format(outfile, rec.title.encode('utf-8').strip(), rec.category, rec.originalairdate, rec.title.encode('utf-8').strip(), rec.season, rec.episode, rec.programid, rec.subtitle.encode('utf-8').strip(), rec.subtitle.encode('utf-8').strip(), rec.description.encode('utf-8').strip())])
 
     if jobid:
         if output_bitrate:
@@ -678,22 +680,8 @@ def encode(jobid=None, db=None, job=None,
 	script = '{} {}'.format(script, vbitrate_param)
 	# parameters to determine audio encode target bitrate
 	script = '{} {}'.format(script, abitrate_param)
-	# parameter to encode all input audio streams into the output
-	#                      '',
-	# script = '{} -map 0:a'.format(script)
-	# parameters to set the first output audio stream 
-	# to be an audio stream having the specified language (default=eng -> English)
-	#                      '-metadata:s:a:0',
-	#                      'language=%s' % language,
 	# parameter to copy input subtitle streams into the output
 	script = '{} -s 1 {}'.format(script, burncc)
-	#                     '-c:s mov_text',
-	# parameters to set the first output subtitle stream 
-	# to be an english subtitle stream
-	#                      '-metadata:s:s:0',
-	#                      'language=%s' % language,
-	# we can control the number of encode threads (disabled)
-	#                      '-threads 2',
 	# output file parameter
 	script = '{} -o "{}"'.format(script, outfile)
 	# redirection of output to temporaryfile
@@ -712,21 +700,8 @@ def encode(jobid=None, db=None, job=None,
                       vbitrate_param,
                       # parameters to determine audio encode target bitrate
                       abitrate_param,
-                      # parameter to encode all input audio streams into the output
-#                      '-map 0:a',
-                      # parameters to set the first output audio stream 
-                      # to be an audio stream having the specified language (default=eng -> English)
-#                      '-metadata:s:a:0',
-#                      'language=%s' % language,
                       # parameter to copy input subtitle streams into the output
                       '-s 1 {}'.format(burncc),
-#                     '-c:s mov_text',
-                      # parameters to set the first output subtitle stream 
-                      # to be an english subtitle stream
-#                      '-metadata:s:s:0',
-#                      'language=%s' % language,
-                      # we can control the number of encode threads (disabled)
-#                      '-threads 2',
                       # output file parameter
                       '-o "{}"'.format(outfile),
                       # redirection of output to temporaryfile
