@@ -7,7 +7,7 @@ This script depends on:
 * Mythtv
 * HandBrakeCLI
 * mediainfo
-* AtomicParsley
+* [AtomicParsley .9.6](https://bitbucket.org/wez/atomicparsley)
  
 The script can be run as a UserJob in Mythtv or as a commandline script
 * /path/to/script/transcode-hcli-h264.py %JOBID% (optional flags: --sd=1, --burncc=1)
