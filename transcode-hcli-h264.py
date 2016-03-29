@@ -262,7 +262,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
     outtitle = rec.title.replace("&", "and")
     outtitle = re.sub('[^A-Za-z0-9 ]+', '', outtitle)
     if rec.season > 0 and rec.episode > 0:
-        outtitle = '{} S{} E{0:02d}.mp4'.format(outtitle, rec.season, rec.episode)
+        outtitle = '{0:s} S{1:d} E{2:02d}.mp4'.format(outtitle, rec.season, rec.episode)
     elif rec.originalairdate > datetime.date(datetime(1, 1, 1, 0, 0)):
         outtitle = '{} {}.mp4'.format(outtitle, str(rec.originalairdate.strftime("%Y%m%d")))
     else:
@@ -573,11 +573,11 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
     rec.transcoded = 1
     rec.seek.clean()
     rec.update()
-
-    os.remove(infile)
+    # TODO: uncomment remove of infile and loop of png infiles
+    #os.remove(infile)
     # Cleanup the old *.png files
-    for filename in glob('%s*.png' % infile):
-        os.remove(filename)
+    #for filename in glob('%s*.png' % infile):
+        #os.remove(filename)
     os.remove(tmpfile)
     try:
         os.remove('%s.map' % tmpfile)
@@ -622,13 +622,13 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
     
     # Add Metadata to outfile based on the data in the rec object
     if debug:
-        print 'Adding metadata to the outfile {} --title "{}" --genre "{}" --year "{}" --TVShowName "{}" --TVSeasonNum "{}" --TVEpisodeNum "{}" --TVEpisode "{}" --comment "{}" --description "{}" --overWrite'.format(outfile, rec.title, rec.category, rec.originalairdate, rec.title, rec.season, rec.episode, rec.programid, rec.subtitle, rec.description)
+        print 'Adding metadata to the outfile: AtomicParsley {} --title "{}" --genre "{}" --year "{}" --TVShowName "{}" --TVSeasonNum "{}" --TVEpisodeNum "{}" --TVEpisode "{}" --comment "{}" --description "{}" --longdesc "{}" --overWrite'.format(outfile, rec.title, rec.category, rec.originalairdate, rec.title, rec.season, rec.episode, rec.programid, rec.subtitle, rec.subtitle, rec.description)
     if jobid:
         progress_str = 'Adding metadata to the outfile.'
         job.update({'status':job.RUNNING, 'comment': progress_str})
 
-    metatask = System(path='AtomicParsley', db=db)
-    metaoutput = metatask(' {} --title "{}" --genre "{}" --year "{}" --TVShowName "{}" --TVSeasonNum "{}" --TVEpisodeNum "{}" --TVEpisode "{}" --comment "{}" --description "{}" --overWrite').format(outfile, rec.title, rec.category, rec.originalairdate, rec.title, rec.season, rec.episode, rec.programid, rec.subtitle, rec.description)
+    metatask = System(path='/usr/bin/AtomicParsley', db=db)
+    metaoutput = metatask(' {} --title "{}" --genre "{}" --year "{}" --TVShowName "{}" --TVSeasonNum "{}" --TVEpisodeNum "{}" --TVEpisode "{}" --comment "{}" --description "{}" --longdesc "{}" --overWrite').format(outfile, rec.title, rec.category, rec.originalairdate, rec.title, rec.season, rec.episode, rec.programid, rec.subtitle, rec.subtitle, rec.description)
 
     if jobid:
         if output_bitrate:
