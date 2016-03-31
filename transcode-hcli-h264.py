@@ -31,7 +31,6 @@
 #         maxWidth/maxHeight to be setup.
 # - added subtitles to be saved in the file
 # - added output file name to be of show title and either startdate, airdate, or Season/Episode
-# - added save of metadata to outfile.
 #
 from MythTV import Job, Recorded, System, MythDB, findfile, MythError, MythLog, datetime
 
@@ -276,7 +275,6 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
     if debug:
         print 'tmpfile "%s"' % tmpfile
         print 'outfile "%s"' % outfile
-
 
     clipped_bytes=0;
     # If selected, create a cutlist to remove commercials via mythtranscode by running:
@@ -623,14 +621,17 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
                 rec.markup.commit()
     
     # Add Metadata to outfile based on the data in the rec object
-    if debug:
-        print 'Adding metadata to the outfile: AtomicParsley "{}" --title "{}" --genre "{}" --year "{}" --TVShowName "{}" --TVSeasonNum "{}" --TVEpisodeNum "{}" --TVEpisode "{}" --comment "{}" --description "{}" --longdesc "{}" --overWrite'.format(outfile, rec.title.encode('utf-8').strip(), rec.category, rec.originalairdate, rec.title.encode('utf-8').strip(), rec.season, rec.episode, rec.programid, rec.subtitle.encode('utf-8').strip(), rec.subtitle.encode('utf-8').strip(), rec.description.encode('utf-8').strip())
-
+    
     if jobid:
         progress_str = 'Adding metadata to the outfile.'
         job.update({'status':job.RUNNING, 'comment': progress_str})
-
-    metatask = subprocess.call(['/usr/bin/AtomicParsley', ' "{}" --title "{}" --genre "{}" --year "{}" --TVShowName "{}" --TVSeasonNum "{}" --TVEpisodeNum "{}" --TVEpisode "{}" --comment "{}" --description "{}" --longdesc "{}" --overWrite'.format(outfile, rec.title.encode('utf-8').strip(), rec.category, rec.originalairdate, rec.title.encode('utf-8').strip(), rec.season, rec.episode, rec.programid, rec.subtitle.encode('utf-8').strip(), rec.subtitle.encode('utf-8').strip(), rec.description.encode('utf-8').strip())])
+    try:
+        metatask = System(path='nice', db=db)
+        metatask('-n {} /usr/bin/AtomicParsley "{}" --title "{}" --genre "{}" --year "{}" --TVShowName "{}" --TVSeasonNum "{}" --TVEpisodeNum "{}" --TVEpisode "{}" --comment "{}" --description "{}" --longdesc "{}" --overWrite'.format(NICELEVEL, os.path.realpath(outfile), rec.title.encode('utf-8').strip(), rec.category, rec.originalairdate, rec.title.encode('utf-8').strip(), rec.season, rec.episode, rec.programid, rec.subtitle.encode('utf-8').strip(), rec.subtitle.encode('utf-8').strip(), rec.description.encode('utf-8').strip()))
+        #metatask = subprocess.call(['/usr/bin/AtomicParsley', os.path.realpath(outfile), '--title "{}"'.format(rec.title.encode('utf-8').strip()), '--genre "{}"'.format(rec.category), '--year "{}"'.format(rec.originalairdate), '--TVShowName "{}"'.format(rec.title.encode('utf-8').strip()), '--TVSeasonNum "{}"'.format(rec.season), '--TVEpisodeNum "{}"'.format(rec.episode), '--TVEpisode "{}"'.format(rec.programid), '--comment "{}"'.format(rec.subtitle.encode('utf-8').strip()), '--description "{}"'.format(rec.subtitle.encode('utf-8').strip()), '--longdesc "{}"'.format(rec.subtitle.encode('utf-8').strip()), '--overWrite'])
+    except Exception as e:
+        if debug:
+            print 'Adding metadata to the outfile failed. Run this manually: /usr/bin/AtomicParsley "{}" --title "{}" --genre "{}" --year "{}" --TVShowName "{}" --TVSeasonNum "{}" --TVEpisodeNum "{}" --TVEpisode "{}" --comment "{}" --description "{}" --longdesc "{}" --overWrite'.format(os.path.realpath(outfile), rec.title.encode('utf-8').strip(), rec.category, rec.originalairdate, rec.title.encode('utf-8').strip(), rec.season, rec.episode, rec.programid, rec.subtitle.encode('utf-8').strip(), rec.subtitle.encode('utf-8').strip(), rec.description.encode('utf-8').strip())
 
     if jobid:
         if output_bitrate:
@@ -741,7 +742,7 @@ def main():
         MythLog._setlevel(opts.verbose)
 
     if len(args) == 1:
-        runjob(jobid=args[0], sdonly=opts.sdonly)
+        runjob(jobid=args[0], sdonly=opts.sdonly, burncc=opts.burncc)
     elif opts.chanid and opts.starttime and opts.tzoffset is not None:
         runjob(chanid=opts.chanid, starttime=opts.starttime, tzoffset=opts.tzoffset, sdonly=opts.sdonly, burncc=opts.burncc)
     else:
