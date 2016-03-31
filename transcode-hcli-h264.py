@@ -139,9 +139,9 @@ abitrate_param_nonHD = '--aencoder copy:aac'
 # TODO detect and preserve ac3 5.1 streams typically found in HD content
 # TODO detect and preserve audio streams by language 
 # TODO detect and preserve subtitle streams by language 
-# TODO is mp4 or mkv better for subtitle support in playback
+# TODO is m4v or mkv better for subtitle support in playback
 #   subtitle codecs for MKV containers: copy, ass, srt, ssa
-#   subtitle codecs for MP4 containers: copy, mov_text
+#   subtitle codecs for M4V containers: copy, mov_text
 
 # Languages for audio stream and subtitle selection
 # eng - English
@@ -163,7 +163,7 @@ NICELEVEL=0
 class CleanExit:
   pass
 
-def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxWidth, maxHeight=maxHeight, sdonly=0, burncc=0):
+def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxWidth, maxHeight=maxHeight, sdonly=0, burncc=0, usemkv=0):
     global estimateBitrate
     db = MythDB()
     
@@ -255,23 +255,26 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
     if sg is None:
         print 'Local access to recording not found.'
         sys.exit(1)
-#TODO: allow outfile to be program name +Season-Episode or date
+
     infile = os.path.join(sg.dirname, rec.basename)
     tmpfile = '%s.tmp' % infile.rsplit('.',1)[0]
- #   tmpfile = infile
-#    outfile = os.path.join(sg.dirname, rec.basename)
     outtitle = rec.title.replace("&", "and")
     outtitle = re.sub('[^A-Za-z0-9 ]+', '', outtitle)
+    filetype = 'm4v'
+    if usemkv == 1:
+        filetype = 'mkv'
+
     if rec.season > 0 and rec.episode > 0:
-        outtitle = '{0:s} S{1:d} E{2:02d}.mp4'.format(outtitle, rec.season, rec.episode)
+        outtitle = '{0:s} S{1:d} E{2:02d}'.format(outtitle, rec.season, rec.episode)
     elif rec.originalairdate > datetime.date(datetime(1, 1, 1, 0, 0)):
-        outtitle = '{} {}.mp4'.format(outtitle, str(rec.originalairdate.strftime("%Y%m%d")))
+        outtitle = '{} {}'.format(outtitle, str(rec.originalairdate.strftime("%Y%m%d")))
     else:
-        outtitle = '{} {}.mp4'.format(outtitle, str(rec.starttime.strftime("%Y%m%d")))
+        outtitle = '{} {}'.format(outtitle, str(rec.starttime.strftime("%Y%m%d")))
+    outtitle = '{}.{}'.format(outtitle, filetype)
 
     outfile = os.path.join(sg.dirname, outtitle)
     if os.path.isfile(outfile):
-        outfile = '{}-{}.mp4'.format(outfile.rsplit('.',1)[0],str(rec.starttime.strftime("%Y%m%d")))
+        outfile = '{}-{}.{}'.format(outfile.rsplit('.',1)[0],str(rec.starttime.strftime("%Y%m%d")),filetype)
     if debug:
         print 'tmpfile "%s"' % tmpfile
         print 'outfile "%s"' % outfile
@@ -438,10 +441,6 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
     else:
         burncc = ''
 
-    # Transcode to mp4
-#    if jobid:
-#        job.update({'status':4, 'comment':'Transcoding to mp4'})
-
     # HandBrakeCLI output is redirected to the temporary file tmpstatusfile and
     # a second thread continuously reads this file while
     # the transcode is in-process. see while loop below for the monitoring thread
@@ -454,7 +453,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
     # create a thread to perform the encode
     ipq = Queue.Queue()
     t = threading.Thread(target=wrapper, args=(encode, 
-                        (jobid, db, job, ipq, preset, scaling, burncc, vbitrate_param, abitrate_param,
+                        (jobid, db, job, ipq, preset, scaling, burncc, usemkv, vbitrate_param, abitrate_param,
                          tmpfile, outfile, tmpstatusfile,), res))
     t.start()
     # wait for HandBrakeCLI to open the file and emit its initialization information 
@@ -517,8 +516,8 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
                             print 'Progress %d%% encoding %.1f frames per second ETA %d mins' \
                                   % ( progress, fps, float(eta_secs)/60)
                         if jobid:
-                            progress_str = 'Transcoding to mp4 %d%% complete ETA %d mins fps=%.1f.' \
-                                  % ( progress, float(eta_secs)/60, fps)
+                            progress_str = 'Transcoding to % %d%% complete ETA %d mins fps=%.1f.' \
+                                  % ( filetype, progress, float(eta_secs)/60, fps)
                             job.update({'status':job.RUNNING, 'comment': progress_str})
                         prev_progress = progress
                 elif len(lines) > 1:
@@ -663,54 +662,41 @@ def get_duration(db=None, rec=None, transcoder='/usr/bin/HandBrakeCLI', filename
     return -1, e
 
 def encode(jobid=None, db=None, job=None, 
-           procqueue=None, preset='slow', scaling='', burncc='',
+           procqueue=None, preset='slow', scaling='', burncc='', usemkv=0,
            vbitrate_param='-q 21',
            abitrate_param='--aencoder ca_aac,copy:ac3',
            tmpfile=None, outfile=None, statusfile=None):
 #    task = System(path=transcoder, db=db)
     task = System(path='nice', db=db)
     if debug:
-	script = 'nice -n {} {} -i "{}"'.format(NICELEVEL, transcoder, tmpfile)
-	# parameter to allow streaming content
-	script = '{} -O {} --markers --detelecine --strict-anamorphic'.format(script, scaling)
-	# h264 video codec
-	script = '{} --large-file --encoder x264'.format(script)
-	# presets for h264 encode that effect encode speed/output filesize
-	script = '{} --encopts {}'.format(script, preset)
-	# parameters to determine video encode target bitrate
-	script = '{} {}'.format(script, vbitrate_param)
-	# parameters to determine audio encode target bitrate
-	script = '{} {}'.format(script, abitrate_param)
-	# parameter to copy input subtitle streams into the output
-	script = '{} -s 1 {}'.format(script, burncc)
-	# output file parameter
-	script = '{} -o "{}"'.format(script, outfile)
-	# redirection of output to temporaryfile
-	script = '{} > {} 2>&1 < /dev/null'.format(script, statusfile)
+        script = 'nice -n {} {} -i "{}"'.format(NICELEVEL, transcoder, tmpfile)
+        # parameter to allow streaming content
+        script = '{} -O {} --markers --detelecine --strict-anamorphic'.format(script, scaling)
+        # h264 video codec
+        script = '{} --large-file --encoder x264'.format(script)
+        if usemkv == 1:
+            # use the Normal preset for MKV
+            script = '{} -Z Normal'.format(script)
+        else:
+            # presets for h264 encode that effect encode speed/output filesize
+            script = '{} --encopts {}'.format(script, preset)
+            # parameters to determine video encode target bitrate
+            script = '{} {}'.format(script, vbitrate_param)
+            # parameters to determine audio encode target bitrate
+            script = '{} {}'.format(script, abitrate_param)
+            # parameter to copy input subtitle streams into the output
+            script = '{} -s 1 {}'.format(script, burncc)
+        # output file parameter
+        script = '{} -o "{}"'.format(script, outfile)
+        # redirection of output to temporaryfile
+        script = '{} > {} 2>&1 < /dev/null'.format(script, statusfile)
         print 'Executing Transcoder: \n{}'.format(script)
     try:
-        output = task(
-                      '-n {} {} -i "{}"'.format(NICELEVEL, transcoder, tmpfile),
-		      # parameter to allow streaming content
-                      '-O {} --markers --detelecine --strict-anamorphic'.format(scaling),
-                      # h264 video codec
-                      '--large-file --encoder x264',
-                      # presets for h264 encode that effect encode speed/output filesize
-                      '--encopts {}'.format(preset),
-                      # parameters to determine video encode target bitrate
-                      vbitrate_param,
-                      # parameters to determine audio encode target bitrate
-                      abitrate_param,
-                      # parameter to copy input subtitle streams into the output
-                      '-s 1 {}'.format(burncc),
-                      # output file parameter
-                      '-o "{}"'.format(outfile),
-                      # redirection of output to temporaryfile
-                      '> {} 2>&1 < /dev/null'.format(statusfile))
+        output = task('{}'.format(script))
     except MythError, e:
         print 'Command failed with output:\n%s' % e.stderr
         if jobid:
-            job.update({'status':job.ERRORED, 'comment':'Transcoding to mp4 failed'})
+            job.update({'status':job.ERRORED, 'comment':'Transcoding to {} failed'.format(filetype)})
         procqueue.put(CleanExit)
         sys.exit(e.retcode)
 
@@ -730,6 +716,8 @@ def main():
             help='Use sd to force the output to be SD dimentions')
     parser.add_option('--burncc', action='store', type='int', default=0, dest='burncc',
             help='Use burncc to burn the subtitle/cc into the video')
+    parser.add_option('--mkv', action='store', type='int', default=0, dest='usemkv',
+            help='Use mkv instead of mp4')
     parser.add_option('-v', '--verbose', action='store', type='string', dest='verbose',
             help='Verbosity level')
 
@@ -742,9 +730,9 @@ def main():
         MythLog._setlevel(opts.verbose)
 
     if len(args) == 1:
-        runjob(jobid=args[0], sdonly=opts.sdonly, burncc=opts.burncc)
+        runjob(jobid=args[0], sdonly=opts.sdonly, burncc=opts.burncc, usemkv=opts.usemkv)
     elif opts.chanid and opts.starttime and opts.tzoffset is not None:
-        runjob(chanid=opts.chanid, starttime=opts.starttime, tzoffset=opts.tzoffset, sdonly=opts.sdonly, burncc=opts.burncc)
+        runjob(chanid=opts.chanid, starttime=opts.starttime, tzoffset=opts.tzoffset, sdonly=opts.sdonly, burncc=opts.burncc, usemkv=opts.usemkv)
     else:
         print 'Script must be provided jobid, or chanid, starttime and timezone offset.'
         sys.exit(1)
