@@ -163,7 +163,7 @@ NICELEVEL=0
 class CleanExit:
   pass
 
-def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxWidth, maxHeight=maxHeight, sdonly=0, burncc=0, usemkv=0):
+def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxWidth, maxHeight=maxHeight, sdonly=0, burncc=0, usemkv=0, overwrite=1):
     global estimateBitrate
     db = MythDB()
     
@@ -265,7 +265,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
         filetype = 'm4v'
         if usemkv == 1:
             filetype = 'mkv'
-
+        print rec.programid[0:2]
         if rec.season > 0 and rec.episode > 0:
             outtitle = '{0:s} S{1:d} E{2:02d}'.format(outtitle, rec.season, rec.episode)
         elif rec.programid[0:2] == 'MO':
@@ -548,76 +548,80 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
             rec.cutlist = 0
             rec.markup.commit()
 
-        rec.basename = os.path.basename(outfile)
-        rec.filesize = os.path.getsize(outfile)
-        rec.transcoded = 1
-        rec.seek.clean()
-        rec.update()
-        # TODO: uncomment remove of infile and loop of png infiles
-        os.remove(infile)
-        # Cleanup the old *.png files
-        for filename in glob('%s*.png' % infile):
-            os.remove(filename)
-        os.remove(tmpfile)
         try:
             os.remove('%s.map' % tmpfile)
         except OSError:
             pass
+        # if we are replacing the original file
+        if overwrite == 1:
+            rec.basename = os.path.basename(outfile)
+            rec.filesize = os.path.getsize(outfile)
+            rec.transcoded = 1
+            rec.seek.clean()
+            rec.update()
+            # TODO: uncomment remove of infile and loop of png infiles
+            os.remove(infile)
+            # Cleanup the old *.png files
+            for filename in glob('%s*.png' % infile):
+                os.remove(filename)
+            os.remove(tmpfile)
 
-        output_filesize = rec.filesize
-        if duration_secs > 0:
-            output_bitrate = int(output_filesize*8/(1024*duration_secs)) # kbps
-        actual_compression_ratio = 1 - float(output_filesize)/clipped_filesize
-        compressed_pct = 1 - float(output_filesize)/input_filesize
+            output_filesize = rec.filesize
+            if duration_secs > 0:
+                output_bitrate = int(output_filesize*8/(1024*duration_secs)) # kbps
+            actual_compression_ratio = 1 - float(output_filesize)/clipped_filesize
+            compressed_pct = 1 - float(output_filesize)/input_filesize
 
-        if build_seektable:
-            if jobid:
-                job.update({'status':job.RUNNING, 'comment':'Rebuilding seektable'})
-            if debug:
-                print 'Rebuilding seektable'
-            task = System(path='mythcommflag')
-            task.command('--chanid %s' % chanid,
-                         '--starttime %s' % starttime,
-                         '--rebuild',
-                         '2> /dev/null')
-
-        # fix during in the recorded markup table this will be off if commercials are removed
-        task2 = System(path=mediainfo, db=db)
-        duration_msecs = float(int(task2('--Inform="Video;%%Duration%%" "%s"' % outfile)))
-        for index,mark in reversed(list(enumerate(rec.markup))):
-            # find the duration markup entry and correct any error in the video duration that might be there
-            if mark.type == 33:
+            if build_seektable:
+                if jobid:
+                    job.update({'status':job.RUNNING, 'comment':'Rebuilding seektable'})
                 if debug:
-                    print 'Markup Duration in milliseconds "%s"' % mark.data
-                error = mark.data - duration_msecs
-                if error != 0:
+                    print 'Rebuilding seektable'
+                task = System(path='mythcommflag')
+                task.command('--chanid %s' % chanid,
+                             '--starttime %s' % starttime,
+                             '--rebuild',
+                             '2> /dev/null')
+
+            # fix during in the recorded markup table this will be off if commercials are removed
+            task2 = System(path=mediainfo, db=db)
+            duration_msecs = float(int(task2('--Inform="Video;%%Duration%%" "%s"' % outfile)))
+            for index,mark in reversed(list(enumerate(rec.markup))):
+                # find the duration markup entry and correct any error in the video duration that might be there
+                if mark.type == 33:
                     if debug:
-                        print 'Markup Duration error is "%s"msecs' % error
-                    mark.data = duration_msecs
-                    #rec.bookmark = 0
-                    #rec.cutlist = 0
-                    rec.markup.commit()
+                        print 'Markup Duration in milliseconds "%s"' % mark.data
+                    error = mark.data - duration_msecs
+                    if error != 0:
+                        if debug:
+                            print 'Markup Duration error is "%s"msecs' % error
+                        mark.data = duration_msecs
+                        #rec.bookmark = 0
+                        #rec.cutlist = 0
+                        rec.markup.commit()
         
         # Add Metadata to outfile based on the data in the rec object
         
         if jobid:
             progress_str = 'Adding metadata to the outfile.'
             job.update({'status':job.RUNNING, 'comment': progress_str})
-        try:
-            metatask = System(path='nice', db=db)
+        # Use AtomicParsley for metadata work on the file if it's not a MKV
+        if filetype != 'mkv':
             if rec.programid[0:2] == 'MO':
-                # Add Actors, Director, and Genre
+                # TODO: Add Actors and Director
                 tmptitle = '{}'.format(rec.title.encode('utf-8').strip())
             if rec.season > 0 and rec.episode > 0:
                 tmptitle = '{0:s} S{1:d} E{2:02d}'.format(rec.title.encode('utf-8').strip(), rec.season, rec.episode)
             atomicparams = '"{}" --title "{}" --genre "{}" --year "{}" --TVShowName "{}" --TVSeasonNum "{}" --TVEpisodeNum "{}" --TVEpisode "{}" --comment "{}" --description "{}" --longdesc "{}" --overWrite'.format(os.path.realpath(outfile), tmptitle, rec.category, rec.originalairdate, rec.title.encode('utf-8').strip(), rec.season, rec.episode, rec.programid, rec.subtitle.encode('utf-8').strip(), rec.subtitle.encode('utf-8').strip(), rec.description.encode('utf-8').strip())
 
-            metatask('-n {} /usr/bin/AtomicParsley {}'.format(NICELEVEL, atomicparams))
-        except Exception as e:
-            if debug:
-                print 'Adding metadata to the outfile failed. Run this manually: /usr/bin/AtomicParsley {}'.format(atomicparams)
-            if jobid:
-                job.update({'status':job.FINISHED, 'comment':'Adding metadata to the outfile failed. Run this manually: /usr/bin/AtomicParsley {}'.format(atomicparams)})
+            try:
+                metatask = System(path='nice', db=db)
+                metatask('-n {} /usr/bin/AtomicParsley {}'.format(NICELEVEL, atomicparams))
+            except Exception as e:
+                if debug:
+                    print 'Adding metadata to the outfile failed. Run this manually: /usr/bin/AtomicParsley {}'.format(atomicparams)
+                if jobid:
+                    job.update({'status':job.FINISHED, 'comment':'Adding metadata to the outfile failed. Run this manually: /usr/bin/AtomicParsley {}'.format(atomicparams)})
 
         if jobid:
             if output_bitrate:
@@ -670,6 +674,8 @@ def encode(jobid=None, db=None, job=None,
         if usemkv == 1:
             # use the Normal preset for MKV
             script = '{} -Z Normal'.format(script)
+            # parameter to copy input subtitle streams into the output
+            script = '{} -s 1'.format(script)
         else:
             # presets for h264 encode that effect encode speed/output filesize
             script = '{} --encopts {}'.format(script, preset)
@@ -705,6 +711,8 @@ def main():
             help='Use starttime with both chanid and tzoffset for manual operation')
     parser.add_option('--tzoffset', action='store', type='int', dest='tzoffset',
             help='Use tzoffset with both chanid and starttime for manual operation')
+    parser.add_option('--overwrite', action='store', type='int', default=1, dest='overwrite',
+            help='Use overwrite to force the output to replace the original file')
     parser.add_option('--sd', action='store', type='int', default=0, dest='sdonly',
             help='Use sd to force the output to be SD dimentions')
     parser.add_option('--burncc', action='store', type='int', default=0, dest='burncc',
@@ -723,9 +731,9 @@ def main():
         MythLog._setlevel(opts.verbose)
 
     if len(args) == 1:
-        runjob(jobid=args[0], sdonly=opts.sdonly, burncc=opts.burncc, usemkv=opts.usemkv)
+        runjob(jobid=args[0], overwrite=opts.overwrite, sdonly=opts.sdonly, burncc=opts.burncc, usemkv=opts.usemkv)
     elif opts.chanid and opts.starttime and opts.tzoffset is not None:
-        runjob(chanid=opts.chanid, starttime=opts.starttime, tzoffset=opts.tzoffset, sdonly=opts.sdonly, burncc=opts.burncc, usemkv=opts.usemkv)
+        runjob(chanid=opts.chanid, starttime=opts.starttime, tzoffset=opts.tzoffset, overwrite=opts.overwrite, sdonly=opts.sdonly, burncc=opts.burncc, usemkv=opts.usemkv)
     else:
         print 'Script must be provided jobid, or chanid, starttime and timezone offset.'
         sys.exit(1)
