@@ -180,463 +180,456 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
         print 'chanid "%s"' % chanid
         print 'utcstarttime "%s"' % utcstarttime
 
-    rec = Recorded((chanid, utcstarttime), db=db);
-    utcstarttime = rec.starttime;
-    starttime_datetime = utcstarttime
-   
-    # reformat 'starttime' for use with mythtranscode/HandBrakeCLI/mythcommflag
-    starttime = str(utcstarttime.utcisoformat().replace(u':', '').replace(u' ', '').replace(u'T', '').replace('-', ''))
-    if debug:
-        print 'mythtv format starttime "%s"' % starttime
-    input_filesize = rec.filesize
-    
-    if rec.commflagged:
+    try:
+        rec = Recorded((chanid, utcstarttime), db=db);
+        
+        utcstarttime = rec.starttime;
+        starttime_datetime = utcstarttime
+       
+        # reformat 'starttime' for use with mythtranscode/HandBrakeCLI/mythcommflag
+        starttime = str(utcstarttime.utcisoformat().replace(u':', '').replace(u' ', '').replace(u'T', '').replace('-', ''))
         if debug:
-            print 'Recording has been scanned to detect commerical breaks.'
-        waititer=1
-        keepWaiting = True
-        while keepWaiting == True:
-            keepWaiting=False;
-            for index,jobitem in reversed(list(enumerate(db.searchJobs(chanid=chanid, starttime=starttime_datetime)))):
-                if jobitem.type == jobitem.COMMFLAG:  # Commercial flagging job
-                    if debug:
-	                print 'Commercial flagging job detected with status %s' % jobitem.status
-                    if jobitem.status == jobitem.RUNNING: # status = RUNNING?
-                        job.update({'status':job.PAUSED, 
-                                    'comment':'Waited %d secs for the commercial flagging job' % (waititer*POLL_INTERVAL) \
-                                     + ' currently running on this recording to complete.'})
-                        if debug:
-                            print 'Waited %d secs for the commercial flagging job' % (waititer*POLL_INTERVAL) \
-                                  + ' currently running on this recording to complete.'
-                        time.sleep(POLL_INTERVAL);
-                        keepWaiting=True
-                        waititer = waititer + 1
-                        break
-    else:
-        if debug:
-            print 'Recording has not been scanned to detect/remove commercial breaks.'
-        if require_commflagged:
-            if jobid:
-                job.update({'status':job.RUNNING, 'comment':'Required commercial flagging for this file is not found.'
-                            + 'Flagging commercials and cancelling any queued commercial flagging.'})
-            # cancel any queued job to flag commercials for this recording and run commercial flagging in this script
-            for index,jobitem in reversed(list(enumerate(db.searchJobs(chanid=chanid,starttime=starttime_datetime)))):
-                if debug:
-                    if index==0:
-                        print jobitem.keys()
-                    print index,jobitem.id,jobitem.chanid
-
-                if jobitem.type == jobitem.COMMFLAG:  # Commercial flagging job
-                    if jobitem.status == jobitem.RUNNING: # status = RUNNING?
-                        jobitem.cmds = jobitem.STOP # stop command from the frontend to stop the commercial flagging job
-                    #jobitem.setStatus(jobitem.CANCELLED)
-                    #jobitem.setComment('Cancelled: Transcode command ran commercial flagging for this recording.')
-                    jobitem.update({'status':jobitem.CANCELLED, 
-                                    'comment':'A user transcode job ran commercial flagging for'
-                                    + ' this recording and cancelled this job.'})
+            print 'mythtv format starttime "%s"' % starttime
+        input_filesize = rec.filesize
+        
+        if rec.commflagged:
             if debug:
-                print 'Flagging Commercials...'
-            # Call "mythcommflag --chanid $CHANID --starttime $STARTTIME"
-            task = System(path='mythcommflag', db=db)
+                print 'Recording has been scanned to detect commerical breaks.'
+            waititer=1
+            keepWaiting = True
+            while keepWaiting == True:
+                keepWaiting=False;
+                for index,jobitem in reversed(list(enumerate(db.searchJobs(chanid=chanid, starttime=starttime_datetime)))):
+                    if jobitem.type == jobitem.COMMFLAG:  # Commercial flagging job
+                        if debug:
+	                    print 'Commercial flagging job detected with status %s' % jobitem.status
+                        if jobitem.status == jobitem.RUNNING: # status = RUNNING?
+                            job.update({'status':job.PAUSED, 
+                                        'comment':'Waited %d secs for the commercial flagging job' % (waititer*POLL_INTERVAL) \
+                                         + ' currently running on this recording to complete.'})
+                            if debug:
+                                print 'Waited %d secs for the commercial flagging job' % (waititer*POLL_INTERVAL) \
+                                      + ' currently running on this recording to complete.'
+                            time.sleep(POLL_INTERVAL);
+                            keepWaiting=True
+                            waititer = waititer + 1
+                            break
+        else:
+            if debug:
+                print 'Recording has not been scanned to detect/remove commercial breaks.'
+            if require_commflagged:
+                if jobid:
+                    job.update({'status':job.RUNNING, 'comment':'Required commercial flagging for this file is not found.'
+                                + 'Flagging commercials and cancelling any queued commercial flagging.'})
+                # cancel any queued job to flag commercials for this recording and run commercial flagging in this script
+                for index,jobitem in reversed(list(enumerate(db.searchJobs(chanid=chanid,starttime=starttime_datetime)))):
+                    if debug:
+                        if index==0:
+                            print jobitem.keys()
+                        print index,jobitem.id,jobitem.chanid
+
+                    if jobitem.type == jobitem.COMMFLAG:  # Commercial flagging job
+                        if jobitem.status == jobitem.RUNNING: # status = RUNNING?
+                            jobitem.cmds = jobitem.STOP # stop command from the frontend to stop the commercial flagging job
+                        #jobitem.setStatus(jobitem.CANCELLED)
+                        #jobitem.setComment('Cancelled: Transcode command ran commercial flagging for this recording.')
+                        jobitem.update({'status':jobitem.CANCELLED, 
+                                        'comment':'A user transcode job ran commercial flagging for'
+                                        + ' this recording and cancelled this job.'})
+                if debug:
+                    print 'Flagging Commercials...'
+                # Call "mythcommflag --chanid $CHANID --starttime $STARTTIME"
+                task = System(path='mythcommflag', db=db)
+                try:
+                    output = task('--chanid "%s"' % chanid,
+                                  '--starttime "%s"' % starttime,
+                                  '2> /dev/null')
+                except MythError, e:
+                    # it seems mythcommflag always exits with an decoding error "eno: Unknown error 541478725 (541478725)"
+                    pass
+                    #print 'Command failed with output:\n%s' % e.stderr
+                    #if jobid:
+                    #    job.update({'status':304, 'comment':'Flagging commercials failed'})
+                    #sys.exit(e.retcode)
+
+
+        sg = findfile('/'+rec.basename, rec.storagegroup, db=db)
+        if sg is None:
+            print 'Local access to recording not found.'
+            sys.exit(1)
+
+        infile = os.path.join(sg.dirname, rec.basename)
+        tmpfile = '%s.tmp' % infile.rsplit('.',1)[0]
+        outtitle = rec.title.replace("&", "and")
+        outtitle = re.sub('[^A-Za-z0-9 ]+', '', outtitle)
+        filetype = 'm4v'
+        if usemkv == 1:
+            filetype = 'mkv'
+
+        if rec.season > 0 and rec.episode > 0:
+            outtitle = '{0:s} S{1:d} E{2:02d}'.format(outtitle, rec.season, rec.episode)
+        elif rec.programid[0:2] == 'MO':
+            outtitle = '{} ({})'.format(outtitle, rec.originalairdate.year)
+        elif rec.originalairdate > datetime.date(datetime(1, 1, 1, 0, 0)):
+            outtitle = '{} {}'.format(outtitle, str(rec.originalairdate.strftime("%Y%m%d")))
+        else:
+            outtitle = '{} {}'.format(outtitle, str(rec.starttime.strftime("%Y%m%d")))
+        outtitle = '{}.{}'.format(outtitle, filetype)
+
+        outfile = os.path.join(sg.dirname, outtitle)
+        if os.path.isfile(outfile):
+            outfile = '{}-{}.{}'.format(outfile.rsplit('.',1)[0],str(rec.starttime.strftime("%Y%m%d")),filetype)
+        if debug:
+            print 'tmpfile "%s"' % tmpfile
+            print 'outfile "%s"' % outfile
+
+        clipped_bytes=0;
+        # If selected, create a cutlist to remove commercials via mythtranscode by running:
+        # mythutil --gencutlist --chanid $CHANID --starttime $STARTTIME
+        if generate_commcutlist:
+            if jobid:
+                job.update({'status':job.RUNNING, 'comment':'Generating Cutlist for commercial removal'})
+            task = System(path='mythutil', db=db)
+            try:
+                output = task('--gencutlist',
+                              '--chanid "%s"' % chanid,
+                              '--starttime "%s"' % starttime)
+            except MythError, e:
+                print 'Command "mythutil --gencutlist" failed with output:\n%s' % e.stderr
+                if jobid:
+                    job.update({'status':job.ERRORED, 'comment':'Generation of commercial Cutlist failed'})
+                sys.exit(e.retcode)
+
+        # Lossless transcode to strip cutlist
+        if generate_commcutlist or rec.cutlist==1:
+            if jobid:
+                job.update({'status':job.RUNNING, 'comment':'Removing Cutlist'})
+            task = System(path='mythtranscode', db=db)
             try:
                 output = task('--chanid "%s"' % chanid,
                               '--starttime "%s"' % starttime,
-                              '2> /dev/null')
+                              '--mpeg2',
+                              '--honorcutlist',
+                              '-o "%s"' % tmpfile,
+                              '1>&2')
+                clipped_filesize = os.path.getsize(tmpfile)
+                clipped_bytes = input_filesize - clipped_filesize
+                clipped_compress_pct = float(clipped_bytes)/input_filesize 
+                rec.commflagged = 0
             except MythError, e:
-                # it seems mythcommflag always exits with an decoding error "eno: Unknown error 541478725 (541478725)"
+                print 'Command "mythtranscode --honorcutlist" failed with output:\n%s' % e.stderr
+                if jobid:
+                    job.update({'status':job.ERRORED, 'comment':'Removing Cutlist failed. Copying file instead.'})
+                copyfile('%s' % infile, '%s' % tmpfile)
+                clipped_filesize = input_filesize
+                clipped_bytes = 0
+                clipped_compress_pct = 0
                 pass
-                #print 'Command failed with output:\n%s' % e.stderr
-                #if jobid:
-                #    job.update({'status':304, 'comment':'Flagging commercials failed'})
-                #sys.exit(e.retcode)
-
-
-    sg = findfile('/'+rec.basename, rec.storagegroup, db=db)
-    if sg is None:
-        print 'Local access to recording not found.'
-        sys.exit(1)
-
-    infile = os.path.join(sg.dirname, rec.basename)
-    tmpfile = '%s.tmp' % infile.rsplit('.',1)[0]
-    outtitle = rec.title.replace("&", "and")
-    outtitle = re.sub('[^A-Za-z0-9 ]+', '', outtitle)
-    filetype = 'm4v'
-    if usemkv == 1:
-        filetype = 'mkv'
-
-    if rec.season > 0 and rec.episode > 0:
-        outtitle = '{0:s} S{1:d} E{2:02d}'.format(outtitle, rec.season, rec.episode)
-    elif rec.originalairdate > datetime.date(datetime(1, 1, 1, 0, 0)):
-        outtitle = '{} {}'.format(outtitle, str(rec.originalairdate.strftime("%Y%m%d")))
-    else:
-        outtitle = '{} {}'.format(outtitle, str(rec.starttime.strftime("%Y%m%d")))
-    outtitle = '{}.{}'.format(outtitle, filetype)
-
-    outfile = os.path.join(sg.dirname, outtitle)
-    if os.path.isfile(outfile):
-        outfile = '{}-{}.{}'.format(outfile.rsplit('.',1)[0],str(rec.starttime.strftime("%Y%m%d")),filetype)
-    if debug:
-        print 'tmpfile "%s"' % tmpfile
-        print 'outfile "%s"' % outfile
-
-    clipped_bytes=0;
-    # If selected, create a cutlist to remove commercials via mythtranscode by running:
-    # mythutil --gencutlist --chanid $CHANID --starttime $STARTTIME
-    if generate_commcutlist:
-        if jobid:
-            job.update({'status':job.RUNNING, 'comment':'Generating Cutlist for commercial removal'})
-        task = System(path='mythutil', db=db)
-        try:
-            output = task('--gencutlist',
-                          '--chanid "%s"' % chanid,
-                          '--starttime "%s"' % starttime)
-#                          '--loglevel debug',
-#                          '2> /dev/null')
-        except MythError, e:
-            print 'Command "mythutil --gencutlist" failed with output:\n%s' % e.stderr
+        else:
             if jobid:
-                job.update({'status':job.ERRORED, 'comment':'Generation of commercial Cutlist failed'})
-            sys.exit(e.retcode)
-
-    # Lossless transcode to strip cutlist
-    if generate_commcutlist or rec.cutlist==1:
-        if jobid:
-            job.update({'status':job.RUNNING, 'comment':'Removing Cutlist'})
-        task = System(path='mythtranscode', db=db)
-        try:
-            output = task('--chanid "%s"' % chanid,
-                          '--starttime "%s"' % starttime,
-                          '--mpeg2',
-                          '--honorcutlist',
-                          '-o "%s"' % tmpfile,
-                          '1>&2')
-#                          '2> /dev/null')
-            clipped_filesize = os.path.getsize(tmpfile)
-            clipped_bytes = input_filesize - clipped_filesize
-            clipped_compress_pct = float(clipped_bytes)/input_filesize 
-            rec.commflagged = 0
-        except MythError, e:
-            print 'Command "mythtranscode --honorcutlist" failed with output:\n%s' % e.stderr
-            if jobid:
-                job.update({'status':job.ERRORED, 'comment':'Removing Cutlist failed. Copying file instead.'})
-#            sys.exit(e.retcode)
+                job.update({'status':job.RUNNING, 'comment':'Creating temporary file for transcoding.'})
             copyfile('%s' % infile, '%s' % tmpfile)
             clipped_filesize = input_filesize
             clipped_bytes = 0
             clipped_compress_pct = 0
-            pass
-    else:
-        if jobid:
-            job.update({'status':job.RUNNING, 'comment':'Creating temporary file for transcoding.'})
-        copyfile('%s' % infile, '%s' % tmpfile)
-        clipped_filesize = input_filesize
-        clipped_bytes = 0
-        clipped_compress_pct = 0
 
-    duration_secs = 0
-    scaling = "--maxHeight {} --maxWidth {}".format(maxHeight,maxWidth)
-    # Estimate bitrate, and detect duration and number of frames
-    if estimateBitrate:
-        if jobid:
-            job.update({'status':job.RUNNING, 'comment':'Estimating bitrate; detecting frames per second, and resolution.'})
+        duration_secs = 0
+        scaling = "--maxHeight {} --maxWidth {}".format(maxHeight,maxWidth)
+        task = System(path=mediainfo, db=db)
+        duration_secs = float(int(task('--Inform="Video;%%Duration%%" "%s"' % infile))/1000)
+        # Estimate bitrate, and detect duration and number of frames
+        if estimateBitrate:
+            if jobid:
+                job.update({'status':job.RUNNING, 'comment':'Estimating bitrate; detecting frames per second, and resolution.'})
 
-#        duration_secs, e = get_duration(db, rec, transcoder, tmpfile);
-	task = System(path=mediainfo, db=db)
-   	duration_secs = float(int(task('--Inform="Video;%%Duration%%" "%s"' % infile))/1000)
-
-        if duration_secs>0:
-            bitrate = int(clipped_filesize*8/(1024*duration_secs))
-        else:
-            print 'Estimate bitrate failed falling back to constant rate factor encoding.\n'
-            estimateBitrate = False
-            duration_secs = 0
-
-    # get framerate of mpeg2 video stream and detect if stream is HD
-    r = re.compile('mpeg2video (.*?) fps,')
-#   m = r.search(e.stderr)
-    framerate = task('--Inform="Video;%%FrameRate%%" "%s"' % infile)
-    vidwidth = int(task('--Inform="Video;%%Width%%" "%s"' % infile))
-    vidheight = int(task('--Inform="Video;%%Height%%" "%s"' % infile))
-
-#	if hasattr(m, 'group'):
-#		strval = m.group(1)
-#	else:
-#		strval = "640x480"
-    if debug:
-#	print strval
-        print "Video Dimentions: {}x{}".format(vidwidth, vidheight)
-    isHD = False
-#   if "1920x1080" in strval or "1280x720" in strval or "2560x1440" in strval:
-    if vidwidth > 640 and vidheight > 480 and sdonly < 1:
-        if debug:
-            print 'Stream is HD'
-        isHD = True
-    elif sdonly > 0:
-        isHD = False
-        maxWidth = 640
-        maxHeight = 360
-
-    if (vidwidth > maxWidth and vidheight > maxHeight):
-        scaling = "{} -w {} -l {}".format(scaling,maxWidth,maxHeight)
-    else:
-        if debug:
-            print 'Stream is not HD'
-    if debug:
-#	print strval
-        print "Output Video Dimentions: {}x{}".format(maxWidth, maxHeight)
-#    if hasattr(m, 'group'):
-#        framerate = float(m.group(1).split(' ')[-1])
-#    else:
-#        framerate = 29.97
-    if debug:
-        print 'Framerate %s' % framerate
-
-    # Setup transcode video bitrate and quality parameters
-    # if estimateBitrate is true and the input content is HD:
-    #     encode 'medium' preset and vbitrate = inputfile_bitrate*compressionRatio
-    # else:
-    #     encode at user default preset and constant rate factor ('slow' and 20) 
-    preset = preset_nonHD
-    if estimateBitrate:
-        if isHD:
-            h264_bitrate = int(bitrate*compressionRatio)
-            # HD coding with specified target bitrate (CRB encoding)
-            if hdvideo_tgt_bitrate > 0 and h264_bitrate > hdvideo_tgt_bitrate:
-                h264_bitrate = hdvideo_tgt_bitrate;
-                vbitrate_param = '-b:v %dk' % h264_bitrate
-            else:   # HD coding with disabled or acceptable target bitrate (CRF encoding)
-                vbitrate_param = '-crf:v %s' % crf
-            preset = preset_HD
-        else: # non-HD encoding (CRF encoding)
-            vbitrate_param = '-crf:v %s' % crf            
-    else:
-        vbitrate_param = '-crf:v %s' % crf
-    vbitrate_param = '--encopts b-adapt=2:8x8dct=0:cabac=0:'
-    if hdvideo_min_bitrate > 0:
-        vbitrate_param = vbitrate_param + ':vbv-minrate=%sk' % hdvideo_min_bitrate
-    if hdvideo_max_bitrate > 0:
-        vbitrate_param = vbitrate_param + ':vbv-maxrate=%sk' % hdvideo_max_bitrate
-    if hdvideo_max_bitrate > 0 or hdvideo_min_bitrate > 0:
-        vbitrate_param = vbitrate_param + ':vbv-bufsize=%sk' % device_bufsize
-
-    vbitrate_param = vbitrate_param + ':ratetol=inf -q%s ' % crf
-    if debug:
-        print 'Video bitrate parameter "%s"' % vbitrate_param
-        print 'Video h264 preset parameter "%s"' % preset
-
-    # Setup transcode audio bitrate and quality parameters
-    # Right now, the setup is as follows:
-    # if input is HD: 
-    #    copy audio streams to output, i.e., input=output audio
-    # else:
-    #    output is libfdk_aac encoded at 128kbps 
-    if isHD:
-        abitrate_param = abitrate_param_HD  # preserve 5.1 audio
-    else:
-        abitrate_param = abitrate_param_nonHD
-    if debug:
-        print 'Audio bitrate parameter "%s"' % abitrate_param
-    if burncc == 1:
-        burncc = '--subtitle-burned'
-    else:
-        burncc = ''
-
-    # HandBrakeCLI output is redirected to the temporary file tmpstatusfile and
-    # a second thread continuously reads this file while
-    # the transcode is in-process. see while loop below for the monitoring thread
-    tf = tempfile.NamedTemporaryFile(dir='/media/mythtv1/tmp/hcli-x264/',delete=True)
-    tmpstatusfile = tf.name
-#    tmpstatusfile = '/tmp/HandBrakeCLI-transcode.txt'
-    if debug:
-        print 'Using temporary file "%s" for HandBrakeCLI status updates.' % tmpstatusfile
-    res = []
-    # create a thread to perform the encode
-    ipq = Queue.Queue()
-    t = threading.Thread(target=wrapper, args=(encode, 
-                        (jobid, db, job, ipq, preset, scaling, burncc, usemkv, vbitrate_param, abitrate_param,
-                         tmpfile, outfile, tmpstatusfile,), res))
-    t.start()
-    # wait for HandBrakeCLI to open the file and emit its initialization information 
-    # before we start the monitoring process
-    time.sleep(1) 
-    # open the temporary file having the ffmeg output text and process it to generate status updates
-    hangiter=0;
-    with open(tmpstatusfile) as f:
-        # read all the opening HandBrakeCLI status/analysis lines
-        lines = f.readlines()
-        # set initial progress to -1
-        prev_progress=-1
-	framenum=0
-	fps=1.0
-        while t.is_alive():
-            # read all output since last readline() call
-            lines = f.readlines()
-            if len(lines) > 0:
-                # every HandBrakeCLI output status line ends with a carriage return '\r'
-                # split the last read line at these locations
-                lines=lines[-1].split('\r')
-#                if debug:
-#                    print lines;
-                hangiter=0
-                if len(lines) > 1 and lines[-2].startswith('frame'):
-                    # since typical reads will have the last line ending with \r the last status
-                    # message is at index=[-2] start processing this line
-                    # replace multiple spaces with one space
-                    lines[-2] = re.sub(' +',' ',lines[-2])
-                    # remove any spaces after equals signs
-                    lines[-2] = re.sub('= +','=',lines[-2])
-                    # split the fields at the spaces the first two fields for typical
-                    # status lines will be framenum=XXXX and fps=YYYY parse the values
-                    values = lines[-2].split(' ')
-                    if len(values) > 1:
-                        if debug:
-                            print 'values %s' % values
-                        prev_framenum = framenum
-                        prev_fps = fps
-                        try:
-                            # framenum = current frame number being encoded
-                            framenum = int(values[0].split('=')[1])
-                            # fps = frames per second for the encoder
-                            fps = float(values[1].split('=')[1])
-                        except ValueError, e:
-			    print 'HandBrakeCLI status parse exception: "%s"' % e
-                            framenum = prev_framenum
-                            fps = prev_fps
-                            pass
-                    # progress = 0-100 represent percent complete for the transcode
-                    progress = int((100*framenum)/(duration_secs*framerate))
-                    # eta_secs = estimated number of seconds until transcoding is complete
-                    eta_secs = int((float(duration_secs*framerate)-framenum)/fps)
-                    # pct_realtime = how many real seconds it takes to encode 1 second of video
-                    pct_realtime = float(fps/framerate) 
-                    if debug:
-                        print 'framenum = %d fps = %.2f' % (framenum, fps)                
-                    if progress != prev_progress:
-                        if debug:
-                            print 'Progress %d%% encoding %.1f frames per second ETA %d mins' \
-                                  % ( progress, fps, float(eta_secs)/60)
-                        if jobid:
-                            progress_str = 'Transcoding to % %d%% complete ETA %d mins fps=%.1f.' \
-                                  % ( filetype, progress, float(eta_secs)/60, fps)
-                            job.update({'status':job.RUNNING, 'comment': progress_str})
-                        prev_progress = progress
-                elif len(lines) > 1:
-                    if debug:
-                        print 'Read pathological output %s' % lines[-2]
-                    if jobid:
-                        progress_str = 'Read pathological output %s' % lines[-2]
-                        job.update({'status':job.RUNNING, 'comment': progress_str})
+            if duration_secs>0:
+                bitrate = int(clipped_filesize*8/(1024*duration_secs))
             else:
-                if debug:
-                    print 'Read no lines of HandBrakeCLI output for %s secs. Possible hang?' % (POLL_INTERVAL*hangiter)
-                hangiter = hangiter + 1
-                if jobid:
-                    progress_str = 'Read no lines of HandBrakeCLI output for %s secs. Possible hang?' % (POLL_INTERVAL*hangiter)
-                    job.update({'status':job.RUNNING, 'comment': progress_str})
-            time.sleep(POLL_INTERVAL)
+                print 'Estimate bitrate failed falling back to constant rate factor encoding.\n'
+                estimateBitrate = False
+                duration_secs = 0
+
+        # get framerate of mpeg2 video stream and detect if stream is HD
+        r = re.compile('mpeg2video (.*?) fps,')
+        framerate = task('--Inform="Video;%%FrameRate%%" "%s"' % infile)
+        vidwidth = int(task('--Inform="Video;%%Width%%" "%s"' % infile))
+        vidheight = int(task('--Inform="Video;%%Height%%" "%s"' % infile))
+
         if debug:
-            print 'res = "%s"' % res
+            print "Video Dimentions: {}x{}".format(vidwidth, vidheight)
+        isHD = False
 
-    t.join(1)
-    try:
-        if ipq.get_nowait() == CleanExit:
-            sys.exit()
-    except Queue.Empty:
-        pass
-
-    if flush_commskip:
-        task = System(path='mythutil')
-        task.command('--chanid %s' % chanid,
-                     '--starttime %s' % starttime,
-                     '--clearcutlist',
-                     '2> /dev/null')
-        task = System(path='mythutil')
-        task.command('--chanid %s' % chanid,
-                     '--starttime %s' % starttime,
-                     '--clearskiplist',
-                     '2> /dev/null')
-
-    if flush_commskip:
-        for index,mark in reversed(list(enumerate(rec.markup))):
-            if mark.type in (rec.markup.MARK_COMM_START, rec.markup.MARK_COMM_END):
-                del rec.markup[index]
-        rec.bookmark = 0
-        rec.cutlist = 0
-        rec.markup.commit()
-
-#    tf.close();
-#    os.remove(tmpstatusfile);
-    rec.basename = os.path.basename(outfile)
-    rec.filesize = os.path.getsize(outfile)
-#    rec.commflagged = 0
-    rec.transcoded = 1
-    rec.seek.clean()
-    rec.update()
-    # TODO: uncomment remove of infile and loop of png infiles
-    #os.remove(infile)
-    # Cleanup the old *.png files
-    #for filename in glob('%s*.png' % infile):
-        #os.remove(filename)
-    os.remove(tmpfile)
-    try:
-        os.remove('%s.map' % tmpfile)
-    except OSError:
-        pass
-
-    output_filesize = rec.filesize
-    if duration_secs > 0:
-        output_bitrate = int(output_filesize*8/(1024*duration_secs)) # kbps
-    actual_compression_ratio = 1 - float(output_filesize)/clipped_filesize
-    compressed_pct = 1 - float(output_filesize)/input_filesize
-
-    if build_seektable:
-        if jobid:
-            job.update({'status':job.RUNNING, 'comment':'Rebuilding seektable'})
-        if debug:
-            print 'Rebuilding seektable'
-        task = System(path='mythcommflag')
-        task.command('--chanid %s' % chanid,
-                     '--starttime %s' % starttime,
-                     '--rebuild',
-                     '2> /dev/null')
-
-    # fix during in the recorded markup table this will be off if commercials are removed
-#    duration_msecs, e = get_duration(db, rec, transcoder, outfile)
-#    duration_msecs = 1000*duration_msecs
-    task2 = System(path=mediainfo, db=db)
-    duration_msecs = float(int(task2('--Inform="Video;%%Duration%%" "%s"' % outfile)))
-    for index,mark in reversed(list(enumerate(rec.markup))):
-        # find the duration markup entry and correct any error in the video duration that might be there
-        if mark.type == 33:
+        if vidwidth > 640 and vidheight > 480 and sdonly < 1:
             if debug:
-                print 'Markup Duration in milliseconds "%s"' % mark.data
-            error = mark.data - duration_msecs
-            if error != 0:
-                if debug:
-                    print 'Markup Duration error is "%s"msecs' % error
-                mark.data = duration_msecs
-                #rec.bookmark = 0
-                #rec.cutlist = 0
-                rec.markup.commit()
-    
-    # Add Metadata to outfile based on the data in the rec object
-    
-    if jobid:
-        progress_str = 'Adding metadata to the outfile.'
-        job.update({'status':job.RUNNING, 'comment': progress_str})
-    try:
-        metatask = System(path='nice', db=db)
-        metatask('-n {} /usr/bin/AtomicParsley "{}" --title "{}" --genre "{}" --year "{}" --TVShowName "{}" --TVSeasonNum "{}" --TVEpisodeNum "{}" --TVEpisode "{}" --comment "{}" --description "{}" --longdesc "{}" --overWrite'.format(NICELEVEL, os.path.realpath(outfile), rec.title.encode('utf-8').strip(), rec.category, rec.originalairdate, rec.title.encode('utf-8').strip(), rec.season, rec.episode, rec.programid, rec.subtitle.encode('utf-8').strip(), rec.subtitle.encode('utf-8').strip(), rec.description.encode('utf-8').strip()))
-        #metatask = subprocess.call(['/usr/bin/AtomicParsley', os.path.realpath(outfile), '--title "{}"'.format(rec.title.encode('utf-8').strip()), '--genre "{}"'.format(rec.category), '--year "{}"'.format(rec.originalairdate), '--TVShowName "{}"'.format(rec.title.encode('utf-8').strip()), '--TVSeasonNum "{}"'.format(rec.season), '--TVEpisodeNum "{}"'.format(rec.episode), '--TVEpisode "{}"'.format(rec.programid), '--comment "{}"'.format(rec.subtitle.encode('utf-8').strip()), '--description "{}"'.format(rec.subtitle.encode('utf-8').strip()), '--longdesc "{}"'.format(rec.subtitle.encode('utf-8').strip()), '--overWrite'])
-    except Exception as e:
-        if debug:
-            print 'Adding metadata to the outfile failed. Run this manually: /usr/bin/AtomicParsley "{}" --title "{}" --genre "{}" --year "{}" --TVShowName "{}" --TVSeasonNum "{}" --TVEpisodeNum "{}" --TVEpisode "{}" --comment "{}" --description "{}" --longdesc "{}" --overWrite'.format(os.path.realpath(outfile), rec.title.encode('utf-8').strip(), rec.category, rec.originalairdate, rec.title.encode('utf-8').strip(), rec.season, rec.episode, rec.programid, rec.subtitle.encode('utf-8').strip(), rec.subtitle.encode('utf-8').strip(), rec.description.encode('utf-8').strip())
+                print 'Stream is HD'
+            isHD = True
+        elif sdonly > 0:
+            isHD = False
+            maxWidth = 640
+            maxHeight = 360
 
-    if jobid:
-        if output_bitrate:
-            job.update({'status':job.FINISHED, 'comment':'Transcode Completed @ %dkbps, compressed file by %d%% (clipped %d%%, transcoder compressed %d%%)' % (output_bitrate,int(compressed_pct*100),int(clipped_compress_pct*100),int(actual_compression_ratio*100))})
+        if (vidwidth > maxWidth and vidheight > maxHeight):
+            scaling = "{} -w {} -l {}".format(scaling,maxWidth,maxHeight)
         else:
-            job.update({'status':job.FINISHED, 'comment':'Transcode Completed'})
+            if debug:
+                print 'Stream is not HD'
+        if debug:
+            print "Output Video Dimentions: {}x{}".format(maxWidth, maxHeight)
+        if debug:
+            print 'Framerate %s' % framerate
+
+        # Setup transcode video bitrate and quality parameters
+        # if estimateBitrate is true and the input content is HD:
+        #     encode 'medium' preset and vbitrate = inputfile_bitrate*compressionRatio
+        # else:
+        #     encode at user default preset and constant rate factor ('slow' and 20) 
+        preset = preset_nonHD
+        if estimateBitrate:
+            if isHD:
+                h264_bitrate = int(bitrate*compressionRatio)
+                # HD coding with specified target bitrate (CRB encoding)
+                if hdvideo_tgt_bitrate > 0 and h264_bitrate > hdvideo_tgt_bitrate:
+                    h264_bitrate = hdvideo_tgt_bitrate;
+                    vbitrate_param = '-b:v %dk' % h264_bitrate
+                else:   # HD coding with disabled or acceptable target bitrate (CRF encoding)
+                    vbitrate_param = '-crf:v %s' % crf
+                preset = preset_HD
+            else: # non-HD encoding (CRF encoding)
+                vbitrate_param = '-crf:v %s' % crf            
+        else:
+            vbitrate_param = '-crf:v %s' % crf
+        vbitrate_param = '--encopts b-adapt=2:8x8dct=0:cabac=0:'
+        if hdvideo_min_bitrate > 0:
+            vbitrate_param = vbitrate_param + ':vbv-minrate=%sk' % hdvideo_min_bitrate
+        if hdvideo_max_bitrate > 0:
+            vbitrate_param = vbitrate_param + ':vbv-maxrate=%sk' % hdvideo_max_bitrate
+        if hdvideo_max_bitrate > 0 or hdvideo_min_bitrate > 0:
+            vbitrate_param = vbitrate_param + ':vbv-bufsize=%sk' % device_bufsize
+
+        vbitrate_param = vbitrate_param + ':ratetol=inf -q%s ' % crf
+        if debug:
+            print 'Video bitrate parameter "%s"' % vbitrate_param
+            print 'Video h264 preset parameter "%s"' % preset
+
+        # Setup transcode audio bitrate and quality parameters
+        # Right now, the setup is as follows:
+        # if input is HD: 
+        #    copy audio streams to output, i.e., input=output audio
+        # else:
+        #    output is libfdk_aac encoded at 128kbps 
+        if isHD:
+            abitrate_param = abitrate_param_HD  # preserve 5.1 audio
+        else:
+            abitrate_param = abitrate_param_nonHD
+        if debug:
+            print 'Audio bitrate parameter "%s"' % abitrate_param
+        if burncc == 1:
+            burncc = '--subtitle-burned'
+        else:
+            burncc = ''
+
+        # HandBrakeCLI output is redirected to the temporary file tmpstatusfile and
+        # a second thread continuously reads this file while
+        # the transcode is in-process. see while loop below for the monitoring thread
+        tf = tempfile.NamedTemporaryFile(dir='/media/mythtv1/tmp/hcli-x264/',delete=True)
+        tmpstatusfile = tf.name
+        if debug:
+            print 'Using temporary file "%s" for HandBrakeCLI status updates.' % tmpstatusfile
+        res = []
+        # create a thread to perform the encode
+        ipq = Queue.Queue()
+        t = threading.Thread(target=wrapper, args=(encode, 
+                            (jobid, db, job, ipq, preset, scaling, burncc, usemkv, vbitrate_param, abitrate_param,
+                             tmpfile, outfile, tmpstatusfile,), res))
+        t.start()
+        # wait for HandBrakeCLI to open the file and emit its initialization information 
+        # before we start the monitoring process
+        time.sleep(1) 
+        # open the temporary file having the ffmeg output text and process it to generate status updates
+        hangiter=0;
+        with open(tmpstatusfile) as f:
+            # read all the opening HandBrakeCLI status/analysis lines
+            lines = f.readlines()
+            # set initial progress to -1
+            prev_progress=-1
+	    framenum=0
+	    fps=1.0
+            while t.is_alive():
+                # read all output since last readline() call
+                lines = f.readlines()
+                if len(lines) > 0:
+                    # every HandBrakeCLI output status line ends with a carriage return '\r'
+                    # split the last read line at these locations
+                    lines=lines[-1].split('\r')
+                    hangiter=0
+                    if len(lines) > 1 and lines[-2].startswith('frame'):
+                        # since typical reads will have the last line ending with \r the last status
+                        # message is at index=[-2] start processing this line
+                        # replace multiple spaces with one space
+                        lines[-2] = re.sub(' +',' ',lines[-2])
+                        # remove any spaces after equals signs
+                        lines[-2] = re.sub('= +','=',lines[-2])
+                        # split the fields at the spaces the first two fields for typical
+                        # status lines will be framenum=XXXX and fps=YYYY parse the values
+                        values = lines[-2].split(' ')
+                        if len(values) > 1:
+                            if debug:
+                                print 'values %s' % values
+                            prev_framenum = framenum
+                            prev_fps = fps
+                            try:
+                                # framenum = current frame number being encoded
+                                framenum = int(values[0].split('=')[1])
+                                # fps = frames per second for the encoder
+                                fps = float(values[1].split('=')[1])
+                            except ValueError, e:
+			        print 'HandBrakeCLI status parse exception: "%s"' % e
+                                framenum = prev_framenum
+                                fps = prev_fps
+                                pass
+                        # progress = 0-100 represent percent complete for the transcode
+                        progress = int((100*framenum)/(duration_secs*framerate))
+                        # eta_secs = estimated number of seconds until transcoding is complete
+                        eta_secs = int((float(duration_secs*framerate)-framenum)/fps)
+                        # pct_realtime = how many real seconds it takes to encode 1 second of video
+                        pct_realtime = float(fps/framerate) 
+                        if debug:
+                            print 'framenum = %d fps = %.2f' % (framenum, fps)                
+                        if progress != prev_progress:
+                            if debug:
+                                print 'Progress %d%% encoding %.1f frames per second ETA %d mins' \
+                                      % ( progress, fps, float(eta_secs)/60)
+                            if jobid:
+                                progress_str = 'Transcoding to % %d%% complete ETA %d mins fps=%.1f.' \
+                                      % ( filetype, progress, float(eta_secs)/60, fps)
+                                job.update({'status':job.RUNNING, 'comment': progress_str})
+                            prev_progress = progress
+                    elif len(lines) > 1:
+                        if debug:
+                            print 'Read pathological output %s' % lines[-2]
+                        if jobid:
+                            progress_str = 'Read pathological output %s' % lines[-2]
+                            job.update({'status':job.RUNNING, 'comment': progress_str})
+                else:
+                    if debug:
+                        print 'Read no lines of HandBrakeCLI output for %s secs. Possible hang?' % (POLL_INTERVAL*hangiter)
+                    hangiter = hangiter + 1
+                    if jobid:
+                        progress_str = 'Read no lines of HandBrakeCLI output for %s secs. Possible hang?' % (POLL_INTERVAL*hangiter)
+                        job.update({'status':job.RUNNING, 'comment': progress_str})
+                time.sleep(POLL_INTERVAL)
+            if debug:
+                print 'res = "%s"' % res
+
+        t.join(1)
+        try:
+            if ipq.get_nowait() == CleanExit:
+                sys.exit()
+        except Queue.Empty:
+            pass
+
+        if flush_commskip:
+            task = System(path='mythutil')
+            task.command('--chanid %s' % chanid,
+                         '--starttime %s' % starttime,
+                         '--clearcutlist',
+                         '2> /dev/null')
+            task = System(path='mythutil')
+            task.command('--chanid %s' % chanid,
+                         '--starttime %s' % starttime,
+                         '--clearskiplist',
+                         '2> /dev/null')
+
+        if flush_commskip:
+            for index,mark in reversed(list(enumerate(rec.markup))):
+                if mark.type in (rec.markup.MARK_COMM_START, rec.markup.MARK_COMM_END):
+                    del rec.markup[index]
+            rec.bookmark = 0
+            rec.cutlist = 0
+            rec.markup.commit()
+
+        rec.basename = os.path.basename(outfile)
+        rec.filesize = os.path.getsize(outfile)
+        rec.transcoded = 1
+        rec.seek.clean()
+        rec.update()
+        # TODO: uncomment remove of infile and loop of png infiles
+        os.remove(infile)
+        # Cleanup the old *.png files
+        for filename in glob('%s*.png' % infile):
+            os.remove(filename)
+        os.remove(tmpfile)
+        try:
+            os.remove('%s.map' % tmpfile)
+        except OSError:
+            pass
+
+        output_filesize = rec.filesize
+        if duration_secs > 0:
+            output_bitrate = int(output_filesize*8/(1024*duration_secs)) # kbps
+        actual_compression_ratio = 1 - float(output_filesize)/clipped_filesize
+        compressed_pct = 1 - float(output_filesize)/input_filesize
+
+        if build_seektable:
+            if jobid:
+                job.update({'status':job.RUNNING, 'comment':'Rebuilding seektable'})
+            if debug:
+                print 'Rebuilding seektable'
+            task = System(path='mythcommflag')
+            task.command('--chanid %s' % chanid,
+                         '--starttime %s' % starttime,
+                         '--rebuild',
+                         '2> /dev/null')
+
+        # fix during in the recorded markup table this will be off if commercials are removed
+        task2 = System(path=mediainfo, db=db)
+        duration_msecs = float(int(task2('--Inform="Video;%%Duration%%" "%s"' % outfile)))
+        for index,mark in reversed(list(enumerate(rec.markup))):
+            # find the duration markup entry and correct any error in the video duration that might be there
+            if mark.type == 33:
+                if debug:
+                    print 'Markup Duration in milliseconds "%s"' % mark.data
+                error = mark.data - duration_msecs
+                if error != 0:
+                    if debug:
+                        print 'Markup Duration error is "%s"msecs' % error
+                    mark.data = duration_msecs
+                    #rec.bookmark = 0
+                    #rec.cutlist = 0
+                    rec.markup.commit()
+        
+        # Add Metadata to outfile based on the data in the rec object
+        
+        if jobid:
+            progress_str = 'Adding metadata to the outfile.'
+            job.update({'status':job.RUNNING, 'comment': progress_str})
+        try:
+            metatask = System(path='nice', db=db)
+            if rec.programid[0:2] == 'MO':
+                # Add Actors, Director, and Genre
+                tmptitle = '{}'.format(rec.title.encode('utf-8').strip())
+            if rec.season > 0 and rec.episode > 0:
+                tmptitle = '{0:s} S{1:d} E{2:02d}'.format(rec.title.encode('utf-8').strip(), rec.season, rec.episode)
+            atomicparams = '"{}" --title "{}" --genre "{}" --year "{}" --TVShowName "{}" --TVSeasonNum "{}" --TVEpisodeNum "{}" --TVEpisode "{}" --comment "{}" --description "{}" --longdesc "{}" --overWrite'.format(os.path.realpath(outfile), tmptitle, rec.category, rec.originalairdate, rec.title.encode('utf-8').strip(), rec.season, rec.episode, rec.programid, rec.subtitle.encode('utf-8').strip(), rec.subtitle.encode('utf-8').strip(), rec.description.encode('utf-8').strip())
+
+            metatask('-n {} /usr/bin/AtomicParsley {}'.format(NICELEVEL, atomicparams))
+        except Exception as e:
+            if debug:
+                print 'Adding metadata to the outfile failed. Run this manually: /usr/bin/AtomicParsley {}'.format(atomicparams)
+            if jobid:
+                job.update({'status':job.FINISHED, 'comment':'Adding metadata to the outfile failed. Run this manually: /usr/bin/AtomicParsley {}'.format(atomicparams)})
+
+        if jobid:
+            if output_bitrate:
+                job.update({'status':job.FINISHED, 'comment':'Transcode Completed @ %dkbps, compressed file by %d%% (clipped %d%%, transcoder compressed %d%%)' % (output_bitrate,int(compressed_pct*100),int(clipped_compress_pct*100),int(actual_compression_ratio*100))})
+            else:
+                job.update({'status':job.FINISHED, 'comment':'Transcode Completed'})
+    except MythError, e:
+        print 'Error when executing the transcode. Job aborted:\n{}{}'.format(e.ename,e.args)
+        if jobid:
+            job.update({'status':job.ERRORED, 'comment':'Error when executing the transcode. Job aborted.{}{}'.format(e.ename)})
+        sys.exit(e.args)
+
 
 def get_duration(db=None, rec=None, transcoder='/usr/bin/HandBrakeCLI', filename=None):
     task = System(path=transcoder, db=db)
