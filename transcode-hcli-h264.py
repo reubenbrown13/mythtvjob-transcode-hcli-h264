@@ -362,7 +362,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
         #TODO : create new function for the work of rendering the file so it can be called twice in the case of an HD and SD dual rendering.
         duration_secs = float(0)
         scaling = "--maxHeight {} --maxWidth {}".format(maxHeight,maxWidth)
-        #task = subprocess.Popen('{} --Inform="{};%{}%" "{}"'.format(mediainfo, 'Video', 'Duration', infile), stdout=subprocess.PIPE)
+        #task = subprocess.Popen('{} --Inform="{};%{}%" "{}"'.format(mediainfo, 'Video', 'Duration', infile), stdout=subprocess.PIPE, shell=True)
         #duration_msecs, e = task.communicate()
         duration_msecs, e = get_mediainfo(db, rec, infile, 'Duration')
         duration_secs = float(int(duration_secs)/1000)
@@ -695,7 +695,7 @@ def add_metadata(db=None, jobid=None, debug=False, job=None, rec=None, filetype=
                 job.update({'status':job.FINISHED, 'comment':'Adding metadata to the filename failed. Run this manually: /usr/bin/AtomicParsley {}'.format(atomicparams)})
 
 def get_mediainfo(db=None, rec=None, filename=None, infosubtype='Duration', infotype='Video', transcoder='/usr/bin/mediainfo'):
-    task = subprocess.Popen('{} --Inform="{};%{}%" "{}"'.format(transcoder, infotype, infosubtype, filename), stdout=subprocess.PIPE)
+    task = subprocess.Popen('{} --Inform="{};%{}%" "{}"'.format(transcoder, infotype, infosubtype, filename), stdout=subprocess.PIPE, shell=True)
     duration_msecs = 0
     if filename is None:
         return -1
@@ -710,7 +710,7 @@ def get_mediainfo(db=None, rec=None, filename=None, infosubtype='Duration', info
         #if debug:
             #print 'Duration in seconds "%s"' % duration_secs
             #print 'Duration in milliseconds "%s"' % duration_msecs
-        return int(duration_msecs.strip()), e
+        return duration_msecs.strip(), e
     return -1, e
 
 def encode(jobid=None, db=None, job=None, 
