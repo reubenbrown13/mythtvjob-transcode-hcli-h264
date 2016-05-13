@@ -644,7 +644,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
                     if debug:
                         print 'Markup Duration in milliseconds "{}"'.format(mark.data)
                         print 'Duration_msecs = {}'.format(duration_msecs)
-                    error = mark.data - duration_msecs
+                    error = int(mark.data) - int(duration_msecs)
                     if error != 0:
                         if debug:
                             print 'Markup Duration error is "%s"msecs' % error
