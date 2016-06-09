@@ -288,16 +288,28 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
         if tmpfile == infile:
             tmpfile = '{}.tmp'.format(infile.rsplit('.',1)[0])
         
-        if os.path.isfile(outfile):
+        if (overwrite == 0):
+            # If not overwritting the file, use the export folder
+			outfile = os.path.join(exportFolder, outtitle)
+			if debug: 
+			    print 'overwrite is 0. outfile "{}"'.format(outfile)
+        if os.path.isfile(outfile) or infile == outfile:
+            # If outfile exists already, create a new name for the file.
             outfile = '{}-{}.{}'.format(outfile.rsplit('.',1)[0],str(rec.starttime.strftime("%Y%m%d")),filetype)
         if infile == tmpfile:
+            # If the infile and tmpfile are the same, crete a new name for the tmpfile
 			tmpfile = '{}-{}.tmp'.format(outfile.rsplit('.',1)[0],str(rec.starttime.strftime("%Y%m%d")))
-        if (overwrite == 0):
-			outfile = os.path.join(exportFolder, outtitle)
+        if os.path.isfile(tmpfile):
+            # If tmp exists already, create a new name for the file.
+            outfile = '{}-{}.{}'.format(tmpfile.rsplit('.',1)[0],str(rec.starttime.strftime("%Y%m%d")),filetype)
+            if debug: 
+                print 'tmp exists. outfile "{}"'.format(outfile)
         if debug:
             print 'infile  "{}"'.format(infile)
             print 'tmpfile "{}"'.format(tmpfile)
             print 'outfile "{}"'.format(outfile)
+
+        #add_metadata(db, jobid, debug, job, rec, filetype, tmpfile)
 
         clipped_bytes=0;
         # If selected, create a cutlist to remove commercials via mythtranscode by running:
@@ -676,17 +688,38 @@ def add_metadata(db=None, jobid=None, debug=False, job=None, rec=None, filetype=
     # Use AtomicParsley for metadata work on the file if it's not a MKV
     if filetype != 'mkv':
         tmptitle = rec.title.encode('utf-8').strip()
+        castmembers = ''
+        director = ''
         if rec.programid[0:2] == 'MV':
             # TODO: Add Actors and Director - need to loop over rec.cast object and reference rec.cast[x].role to determine if actor/director
+            for castmember in rec.cast:
+                if castmember.role == 'director':
+                    if len(director) == 0:
+                        director = [castmember.name]
+                    else:
+                        director.append(castmember.name)
+                if len(castmembers) < 5 and castmember.role == 'actor':
+                    if len(castmembers) == 0:
+                        castmembers = [castmember.name]
+                    else:
+                        castmembers.append(castmember.name)
+                
+            if debug:
+                print 'directors: {}'.format(','.join(director)) 
+                print 'cast members: {}'.format(','.join(castmembers))
             tmptitle = '{}'.format(rec.title.encode('utf-8').strip())
         if rec.season > 0 and rec.episode > 0:
             tmptitle = '{0:s} S{1:d} E{2:02d}'.format(rec.title.encode('utf-8').strip(), rec.season, rec.episode)
 
-        atomicparams = '"{}" --title "{}" --genre "{}" --year "{}" --TVShowName "{}" --TVSeasonNum "{}" --TVEpisodeNum "{}" --TVEpisode "{}" --comment "{}" --description "{}" --longdesc "{}" --overWrite'.format(os.path.realpath(filename), tmptitle, rec.category, rec.originalairdate, rec.title.encode('utf-8').strip(), rec.season, rec.episode, rec.programid, rec.subtitle.encode('utf-8').strip(), rec.subtitle.encode('utf-8').strip(), rec.description.encode('utf-8').strip())
+        atomicparams = '"{}" --title "{}" --genre "{}" --year "{}" --TVShowName "{}" --TVSeasonNum "{}" --TVEpisodeNum "{}" --TVEpisode "{}" --comment "{}" --description "{}" --longdesc "{}" --artist "{}" --albumArtist "{}" --overWrite'.format(os.path.realpath(filename), tmptitle, rec.category, rec.originalairdate, rec.title.encode('utf-8').strip(), rec.season, rec.episode, rec.programid, rec.subtitle.encode('utf-8').strip(), rec.subtitle.encode('utf-8').strip(), rec.description.encode('utf-8').strip(), ','.join(castmembers), ','.join(director))
 
         try:
-            metatask = System(path='nice', db=db)
-            metatask('-n {} {} {}'.format(NICELEVEL, metaapp, atomicparams))
+            # Set a time limit on how long to try and write the atomicparsley metadata to the file.
+            max_time = POLL_INTERVAL
+            start_time = time.time()
+            while (time.time() - start_time) < max_time:
+                metatask = System(path='nice', db=db)
+                metatask('-n {} {} {}'.format(NICELEVEL, metaapp, atomicparams))
         except Exception as e:
             if debug:
                 PrintException()
