@@ -266,12 +266,17 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
         outtitle = rec.title.replace("&", "and")
         outtitle = re.sub('[^A-Za-z0-9 ]+', '', outtitle)
         filetype = 'm4v'
+        #DEBUG CODE TO FIND OBJECT STRUCT: 
+        #print '{}'.format(dir(rec.getProgram()))
+        #print '{}'.format(rec.getProgram().year)
         if usemkv == 1:
             filetype = 'mkv'
         #print '!{}!'.format(rec.programid[0:2])
         if rec.season > 0 and rec.episode > 0: #if there are seasons and episode numbers in the recording data
             outtitle = '{0:s} S{1:d} E{2:02d}'.format(outtitle, rec.season, rec.episode)
-        elif rec.programid[0:2] == 'MV' and rec.originalairdate > datetime.date(datetime(1, 1, 1, 0, 0)): #if it's a movie and has an original air date for when it came out
+        elif rec.programid[0:2] == 'MV' and str(rec.getProgram().year).isdigit(): #if it's a movie and has an original air date for when it came out
+            outtitle = '{} ({})'.format(outtitle, rec.getProgram().year)
+        elif rec.programid[0:2] == 'MV' and rec.originalairdate != None and rec.originalairdate > datetime.date(datetime(1, 1, 1, 0, 0)): #if it's a movie and has an original air date for when it came out
             outtitle = '{} ({})'.format(outtitle, rec.originalairdate.year)
         elif 'Sports' in rec.category: #if it's sports
 			outtitle = '{}-{}-{}'.format(outtitle, re.sub('[^A-Za-z0-9 ]+', '', rec.subtitle), str(rec.starttime.strftime("%Y%m%d")))
@@ -296,12 +301,12 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
         if os.path.isfile(outfile) or infile == outfile:
             # If outfile exists already, create a new name for the file.
             outfile = '{}-{}.{}'.format(outfile.rsplit('.',1)[0],str(rec.starttime.strftime("%Y%m%d")),filetype)
-        if infile == tmpfile:
-            # If the infile and tmpfile are the same, crete a new name for the tmpfile
+        if os.path.isfile(tmpfile):
+            # If the infile and tmpfile are the same, create a new name for the tmpfile
 			tmpfile = '{}-{}.tmp'.format(outfile.rsplit('.',1)[0],str(rec.starttime.strftime("%Y%m%d")))
         if os.path.isfile(tmpfile):
             # If tmp exists already, create a new name for the file.
-            outfile = '{}-{}.{}'.format(tmpfile.rsplit('.',1)[0],str(rec.starttime.strftime("%Y%m%d")),filetype)
+            outfile = '{}-{}.tmp'.format(tmpfile.rsplit('.',1)[0],str(rec.starttime.strftime("%Y%m%d")))
             if debug: 
                 print 'tmp exists. outfile "{}"'.format(outfile)
         if debug:
