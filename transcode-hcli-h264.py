@@ -31,6 +31,8 @@
 #         maxWidth/maxHeight to be setup.
 # - added subtitles to be saved in the file
 # - added output file name to be of show title and either startdate, airdate, or Season/Episode
+# Modifications - Reuben 12/28/2016
+# - updated scripts to work with HandBrakeCLI version 1.0. Removed large-file and change strict-anamorphic to auto-anomorphic.
 #
 from MythTV import Job, Recorded, System, MythDB, findfile, MythError, MythLog, DBDataWrite, datetime
 
@@ -374,6 +376,8 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
             
         if infile != '{}.{}'.format(outfile.rsplit('.',1)[0],infile.rsplit('.',1)[1]):
             rec.basename = os.path.basename('{}.{}'.format(outfile.rsplit('.',1)[0], infile.rsplit('.',1)[1]))
+            if os.path.isfile(rec.basename):
+                rec.basename = os.path.basename('{}-{}.{}'.format(outfile.rsplit('.',1)[0],str(rec.starttime.strftime("%Y%m%d")), infile.rsplit('.',1)[1]))
             rec.update()
 
         #TODO : create new function for the work of rendering the file so it can be called twice in the case of an HD and SD dual rendering.
@@ -482,7 +486,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
         # HandBrakeCLI output is redirected to the temporary file tmpstatusfile and
         # a second thread continuously reads this file while
         # the transcode is in-process. see while loop below for the monitoring thread
-        tf = tempfile.NamedTemporaryFile(dir='/media/mythtv1/tmp/hcli-x264/',delete=True)
+        tf = tempfile.NamedTemporaryFile(suffix='log',dir='/media/mythtv1/tmp/hcli-x264/',delete=True)
         tmpstatusfile = tf.name
         if debug:
             print 'Using temporary file "%s" for HandBrakeCLI status updates.' % tmpstatusfile
@@ -696,7 +700,7 @@ def add_metadata(db=None, jobid=None, debug=False, job=None, rec=None, filetype=
         castmembers = ''
         director = ''
         if rec.programid[0:2] == 'MV':
-            # TODO: Add Actors and Director - need to loop over rec.cast object and reference rec.cast[x].role to determine if actor/director
+            # loop over rec.cast object and reference rec.cast[x].role to determine if actor/director
             for castmember in rec.cast:
                 if castmember.role == 'director':
                     if len(director) == 0:
@@ -761,17 +765,15 @@ def encode(jobid=None, db=None, job=None,
     if debug:
         script = 'nice -n {} {} -i "{}"'.format(NICELEVEL, transcoder, tmpfile)
         # parameter to allow streaming content
-        script = '{} -O {} --markers --detelecine --strict-anamorphic'.format(script, scaling)
-        # h264 video codec
-        script = '{} --large-file --encoder x264'.format(script)
+        script = '{} {} --markers --detelecine --auto-anamorphic'.format(script, scaling)
         if usemkv == 1:
-            # use the Normal preset for MKV
-            script = '{} -Z Normal'.format(script)
+            # use the Normal preset for MKV using h265
+            script = '{} --encoder x265 -Z "HQ 1080p30 Surround"'.format(script)
             # parameter to copy input subtitle streams into the output
             script = '{} -s 1'.format(script)
         else:
             # presets for h264 encode that effect encode speed/output filesize
-            script = '{} --encopts {}'.format(script, preset)
+            script = '{} -O --encoder x264 --encopts {}'.format(script, preset)
             # parameters to determine video encode target bitrate
             script = '{} {}'.format(script, vbitrate_param)
             # parameters to determine audio encode target bitrate
