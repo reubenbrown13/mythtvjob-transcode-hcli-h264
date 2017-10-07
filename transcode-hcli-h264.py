@@ -18,16 +18,16 @@
 #         Note the estimated bitrate is derived from the video duration
 #         and file size hence it will over estimate the true video bitrate as it does not account for the
 #         encapsulation overhead of the input encoding scheme nor the bitrate of any included audio streams.
-#         To enable, set estimateBitrate = True and set compressionRatio to your desired value (I use 0.7). 
+#         To enable, set estimateBitrate = True and set compressionRatio to your desired value (I use 0.7).
 # - added ability to change h264 encoding preset and constant rate factor (crf) settings for HD video
 # - added loads of debug statements, I've kept them in to facilitate hacking -- sorry to the purists in advance
 # - added status output from HandBrakeCLI to the myth backend giving % complete, ETA and fps encode statistics.
-# - added "smart" commercial detection - if needed it is run and on completion cancels any other mythcommflag jobs 
+# - added "smart" commercial detection - if needed it is run and on completion cancels any other mythcommflag jobs
 #         for the transcoded recording
 # Modifications - Drew 1/25/2016
 # - added fix for the markup data which is inaccurate, especially when commercials are removed
 # Modifications - Reuben 3/26/2016
-# - added fix for detection of framerate and dimentions to use mediainfo and also allow for video scaling and 
+# - added fix for detection of framerate and dimentions to use mediainfo and also allow for video scaling and
 #         maxWidth/maxHeight to be setup.
 # - added subtitles to be saved in the file
 # - added output file name to be of show title and either startdate, airdate, or Season/Episode
@@ -44,6 +44,7 @@ import sys
 import os
 import subprocess
 import errno
+import logging
 import threading, time
 from datetime import timedelta
 import re, tempfile
@@ -55,39 +56,40 @@ import Queue # thread-safe
 ########## IMPORTANT #####################
 
 transcoder = '/usr/bin/HandBrakeCLI'
+#transcoder = '/home/rbrown/Public/HandBrakeCLI-mod13'
 mediainfo = '/usr/bin/mediainfo'
 # If desired, set the export folder for when overWrite = 0
 exportFolder = '/var/lib/mythtv/mythexport'
 
 # flush_commskip
-#       True => (Default) the script will delete all commercial skip indices from the old file 
-#      False => the transcode will leave the commercial skip indices from the old file "as is" 
+#       True => (Default) the script will delete all commercial skip indices from the old file
+#      False => the transcode will leave the commercial skip indices from the old file "as is"
 flush_commskip = False
 
 # require_commflagged
 #       True => the script will ensure mythcommflag has run on the file before encoding it
-#      False => (Default) the transcode will process the video file "as is" 
+#      False => (Default) the transcode will process the video file "as is"
 require_commflagged = False
 
-# generate_commcutlist 
+# generate_commcutlist
 #       True => (Default) flagged commercials are removed from the output video file
 #      False => flagged commercials are NOT removed from the output video file
 generate_commcutlist = False
 
-# estimateBitrate 
+# estimateBitrate
 #       True => (Default) the bitrate of the input file is estimated via size & duration
 #               ** Required True for "compressionRatio" option to work.
-#      False => The bitrate of the input file is unknown 
+#      False => The bitrate of the input file is unknown
 estimateBitrate = True
 
 # compressionRatio
-#      0.0 - 1.0 => Set the approximate bitrate of the output relative to the 
+#      0.0 - 1.0 => Set the approximate bitrate of the output relative to the
 #                   detected bitrate of the input.
-#                   One can think of this as the target compression rate, i.e., the 
+#                   One can think of this as the target compression rate, i.e., the
 #                   compressionRatio = (output filesize)/(input filesize)
 #                   h264 video quality is approximately equal to mpeg2 video quality
 #                   at a compression ratio of 0.65-0.75
-#                   * Note: When enabled, this value will determine the approximate 
+#                   * Note: When enabled, this value will determine the approximate
 #                     relative size of the output file and input file
 #                   (output filesize) = compressionRatio * (input filesize)
 compressionRatio = 0.65
@@ -105,7 +107,7 @@ maxHeight = 720
 NUM_SECS_VIDEO_BUF=3        # secs
 device_bufsize = NUM_SECS_VIDEO_BUF*hdvideo_max_bitrate # (kBits_per_sec,kbps)
 
-# enforce a target bitrate for the encoder to achieve approximately 
+# enforce a target bitrate for the encoder to achieve approximately
 #hdvideo_tgt_bitrate = 5000   # 0 = disable or (kBits_per_sec,kbps)
 hdvideo_tgt_bitrate = 0   # 0 = disable or (kBits_per_sec,kbps)
 
@@ -136,14 +138,14 @@ abitrate_param_HD='--aencoder av_aac,copy:ac3'
 # if non-HD, encode audio to AAC with libfdk_aac at a bitrate of 128kbps
 abitrate_param_nonHD = '--aencoder copy:aac --mixdown stereo'
 
-# to convert non-HD audio to AAC using HandBrakeCLI's aac encoder	
+# to convert non-HD audio to AAC using HandBrakeCLI's aac encoder
 #abitrate_param_nonHD='-strict -2'
 
 # TODO use -crf 20 -maxrate 400k -bufsize 1835k
 # effectively "target" crf 20, but if the output exceeds 400kb/s, it will degrade to something more than crf 20
 # TODO detect and preserve ac3 5.1 streams typically found in HD content
-# TODO detect and preserve audio streams by language 
-# TODO detect and preserve subtitle streams by language 
+# TODO detect and preserve audio streams by language
+# TODO detect and preserve subtitle streams by language
 # TODO is m4v or mkv better for subtitle support in playback
 #   subtitle codecs for MKV containers: copy, ass, srt, ssa
 #   subtitle codecs for M4V containers: copy, mov_text
@@ -156,10 +158,10 @@ abitrate_param_nonHD = '--aencoder copy:aac --mixdown stereo'
 # spa - Spanish
 language = 'eng'
 
-# interval between reads from the HandBrakeCLI status file 
-# also defines the interval when waiting for a mythcommflag job to finish 
+# interval between reads from the HandBrakeCLI status file
+# also defines the interval when waiting for a mythcommflag job to finish
 POLL_INTERVAL=30 # secs
-# mythtv automatically launched user jobs with nice level of 17 
+# mythtv automatically launched user jobs with nice level of 17
 # this will add to that level (only positive values allowed unless run as root)
 # e.g., NICELEVEL=1 will run with a nice level of 18. The max nicelevel is 19.
 #NICELEVEL=5
@@ -168,10 +170,10 @@ NICELEVEL=0
 class CleanExit:
   pass
 
-def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxWidth, maxHeight=maxHeight, sdonly=0, burncc=0, usemkv=0, overwrite=1):
+def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxWidth, maxHeight=maxHeight, sdonly=0, quality=crf, burncc=0, usemkv=0, encoder='x264', overwrite=1):
     global estimateBitrate
     db = MythDB()
-    
+
     try:
         if jobid:
             job = Job(jobid, db=db)
@@ -187,16 +189,16 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
             print 'utcstarttime "%s"' % utcstarttime
 
         rec = Recorded((chanid, utcstarttime), db=db);
-        
+
         utcstarttime = rec.starttime;
         starttime_datetime = utcstarttime
-       
+
         # reformat 'starttime' for use with mythtranscode/HandBrakeCLI/mythcommflag
         starttime = str(utcstarttime.utcisoformat().replace(u':', '').replace(u' ', '').replace(u'T', '').replace('-', ''))
         if debug:
             print 'mythtv format starttime "%s"' % starttime
         input_filesize = rec.filesize
-        
+
         if rec.commflagged:
             if debug:
                 print 'Recording has been scanned to detect commerical breaks.'
@@ -209,7 +211,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
                         if debug:
 	                    print 'Commercial flagging job detected with status %s' % jobitem.status
                         if jobitem.status == jobitem.RUNNING: # status = RUNNING?
-                            job.update({'status':job.PAUSED, 
+                            job.update({'status':job.PAUSED,
                                         'comment':'Waited %d secs for the commercial flagging job' % (waititer*POLL_INTERVAL) \
                                          + ' currently running on this recording to complete.'})
                             if debug:
@@ -238,7 +240,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
                             jobitem.cmds = jobitem.STOP # stop command from the frontend to stop the commercial flagging job
                         #jobitem.setStatus(jobitem.CANCELLED)
                         #jobitem.setComment('Cancelled: Transcode command ran commercial flagging for this recording.')
-                        jobitem.update({'status':jobitem.CANCELLED, 
+                        jobitem.update({'status':jobitem.CANCELLED,
                                         'comment':'A user transcode job ran commercial flagging for'
                                         + ' this recording and cancelled this job.'})
                 if debug:
@@ -268,7 +270,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
         outtitle = rec.title.replace("&", "and")
         outtitle = re.sub('[^A-Za-z0-9 ]+', '', outtitle)
         filetype = 'm4v'
-        #DEBUG CODE TO FIND OBJECT STRUCT: 
+        #DEBUG CODE TO FIND OBJECT STRUCT:
         #print '{}'.format(dir(rec.getProgram()))
         #print '{}'.format(rec.getProgram().year)
         if usemkv == 1:
@@ -289,18 +291,18 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
         else:
             outtitle = '{} {}'.format(outtitle, str(rec.starttime.strftime("%Y%m%d")))
         outtitle = '{}.{}'.format(outtitle, filetype)
-		
+
         outfile = os.path.join(sg.dirname, outtitle)
         tmpfile = '{}.{}'.format(outfile.rsplit('.',1)[0], infile.rsplit('.',1)[1])
         if tmpfile == infile:
             tmpfile = '{}.tmp'.format(infile.rsplit('.',1)[0])
-        
+
         if (overwrite == 0):
             # If not overwritting the file, use the export folder
 			outfile = os.path.join(exportFolder, outtitle)
-			if debug: 
+			if debug:
 			    print 'overwrite is 0. outfile "{}"'.format(outfile)
-        if os.path.isfile(outfile) or infile == outfile:
+        if os.path.isfile(outfile) or (infile == outfile and rec.basename != infile):
             # If outfile exists already, create a new name for the file.
             outfile = '{}-{}.{}'.format(outfile.rsplit('.',1)[0],str(rec.starttime.strftime("%Y%m%d")),filetype)
         if os.path.isfile(tmpfile):
@@ -309,7 +311,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
         if os.path.isfile(tmpfile):
             # If tmp exists already, create a new name for the file.
             outfile = '{}-{}.tmp'.format(tmpfile.rsplit('.',1)[0],str(rec.starttime.strftime("%Y%m%d")))
-            if debug: 
+            if debug:
                 print 'tmp exists. outfile "{}"'.format(outfile)
         if debug:
             print 'infile  "{}"'.format(infile)
@@ -337,6 +339,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
 
         # Lossless transcode to strip cutlist
         if generate_commcutlist or rec.cutlist==1:
+            copyfile('%s' % infile, '%s.old' % infile)
             if debug:
                 print 'Removing Cutlist'
             if jobid:
@@ -351,7 +354,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
                               '1>&2')
                 clipped_filesize = os.path.getsize(tmpfile)
                 clipped_bytes = input_filesize - clipped_filesize
-                clipped_compress_pct = float(clipped_bytes)/input_filesize 
+                clipped_compress_pct = float(clipped_bytes)/input_filesize
                 rec.cutlist = 0
                 rec.filesize=clipped_filesize
                 rec.update()
@@ -364,6 +367,19 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
                 clipped_bytes = 0
                 clipped_compress_pct = 0
                 pass
+
+            if jobid:
+                job.update({'status':job.RUNNING, 'comment':'Remove Cutlist from program'})
+            task = System(path='mythutil', db=db)
+            try:
+                output = task('--clearcutlist',
+                              '--chanid "%s"' % chanid,
+                              '--starttime "%s"' % starttime)
+            except MythError, e:
+                print 'Command "mythutil --clearcutlist" failed with output:\n%s' % e.stderr
+                if jobid:
+                    job.update({'status':job.ERRORED, 'comment':'Removal of commercial Cutlist failed'})
+                sys.exit(e.retcode)
         else:
             if debug:
                 print 'Creating temporary file for transcoding.'
@@ -373,11 +389,12 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
             clipped_filesize = input_filesize
             clipped_bytes = 0
             clipped_compress_pct = 0
-            
+
         if infile != '{}.{}'.format(outfile.rsplit('.',1)[0],infile.rsplit('.',1)[1]):
             rec.basename = os.path.basename('{}.{}'.format(outfile.rsplit('.',1)[0], infile.rsplit('.',1)[1]))
             if os.path.isfile(rec.basename):
                 rec.basename = os.path.basename('{}-{}.{}'.format(outfile.rsplit('.',1)[0],str(rec.starttime.strftime("%Y%m%d")), infile.rsplit('.',1)[1]))
+                #outfile = rec.basename
             rec.update()
 
         #TODO : create new function for the work of rendering the file so it can be called twice in the case of an HD and SD dual rendering.
@@ -403,6 +420,8 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
         # get framerate of mpeg2 video stream and detect if stream is HD
         r = re.compile('mpeg2video (.*?) fps,')
         framerate, e = get_mediainfo(db, rec, infile, 'FrameRate')
+        if framerate.replace(',','',1).isdigit() == False:
+            framerate = 29.970
         vidwidth, e = get_mediainfo(db, rec, infile, 'Width')
         vidheight, e = get_mediainfo(db, rec, infile, 'Height')
 
@@ -437,7 +456,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
         # if estimateBitrate is true and the input content is HD:
         #     encode 'medium' preset and vbitrate = inputfile_bitrate*compressionRatio
         # else:
-        #     encode at user default preset and constant rate factor ('slow' and 20) 
+        #     encode at user default preset and constant rate factor ('slow' and 20)
         preset = preset_nonHD
         if estimateBitrate:
             if isHD:
@@ -447,12 +466,12 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
                     h264_bitrate = hdvideo_tgt_bitrate;
                     vbitrate_param = '-b:v %dk' % h264_bitrate
                 else:   # HD coding with disabled or acceptable target bitrate (CRF encoding)
-                    vbitrate_param = '-crf:v %s' % crf
+                    vbitrate_param = '-crf:v %s' % quality
                 preset = preset_HD
             else: # non-HD encoding (CRF encoding)
-                vbitrate_param = '-crf:v %s' % crf            
+                vbitrate_param = '-crf:v %s' % quality
         else:
-            vbitrate_param = '-crf:v %s' % crf
+            vbitrate_param = '-crf:v %s' % quality
         vbitrate_param = '--encopts b-adapt=2:8x8dct=0:cabac=0:'
         if hdvideo_min_bitrate > 0:
             vbitrate_param = vbitrate_param + ':vbv-minrate=%sk' % hdvideo_min_bitrate
@@ -461,17 +480,18 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
         if hdvideo_max_bitrate > 0 or hdvideo_min_bitrate > 0:
             vbitrate_param = vbitrate_param + ':vbv-bufsize=%sk' % device_bufsize
 
-        vbitrate_param = vbitrate_param + ':ratetol=inf -q%s ' % crf
+        vbitrate_param = vbitrate_param + ':ratetol=inf -q%s ' % quality
+        vbitrate_param = "{} -r {} --cfr".format(vbitrate_param, framerate)
         if debug:
             print 'Video bitrate parameter "%s"' % vbitrate_param
             print 'Video h264 preset parameter "%s"' % preset
 
         # Setup transcode audio bitrate and quality parameters
         # Right now, the setup is as follows:
-        # if input is HD: 
+        # if input is HD:
         #    copy audio streams to output, i.e., input=output audio
         # else:
-        #    output is libfdk_aac encoded at 128kbps 
+        #    output is libfdk_aac encoded at 128kbps
         if isHD:
             abitrate_param = abitrate_param_HD  # preserve 5.1 audio
         else:
@@ -493,13 +513,13 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
         res = []
         # create a thread to perform the encode
         ipq = Queue.Queue()
-        t = threading.Thread(target=wrapper, args=(encode, 
-                            (jobid, db, job, ipq, preset, scaling, burnccopt, usemkv, vbitrate_param, abitrate_param,
+        t = threading.Thread(target=wrapper, args=(encode,
+                            (jobid, db, job, ipq, preset, scaling, burnccopt, usemkv, encoder, vbitrate_param, abitrate_param,
                              tmpfile, outfile, tmpstatusfile,), res))
         t.start()
-        # wait for HandBrakeCLI to open the file and emit its initialization information 
+        # wait for HandBrakeCLI to open the file and emit its initialization information
         # before we start the monitoring process
-        time.sleep(1) 
+        time.sleep(1)
         # open the temporary file having the ffmeg output text and process it to generate status updates
         hangiter=0;
         with open(tmpstatusfile) as f:
@@ -548,9 +568,9 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
                         # eta_secs = estimated number of seconds until transcoding is complete
                         eta_secs = int((float(duration_secs*framerate)-framenum)/fps)
                         # pct_realtime = how many real seconds it takes to encode 1 second of video
-                        pct_realtime = float(fps/framerate) 
+                        pct_realtime = float(fps/framerate)
                         if debug:
-                            print 'framenum = %d fps = %.2f' % (framenum, fps)                
+                            print 'framenum = %d fps = %.2f' % (framenum, fps)
                         if progress != prev_progress:
                             if debug:
                                 print 'Progress %d%% encoding %.1f frames per second ETA %d mins' \
@@ -608,7 +628,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
             os.remove('%s.map' % tmpfile)
         except OSError:
             pass
-        
+
         # if we are replacing the original file
         if overwrite == 1:
             rec.basename = os.path.basename(outfile)
@@ -625,7 +645,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
 
         # Add Metadata to outfile based on the data in the rec object
         add_metadata(db, jobid, debug, job, rec, filetype, outfile)
-		
+
         #replace the original infile with the tmp file, so remove the infile
         if infile != '{}.{}'.format(os.path.join(sg.dirname, outtitle.rsplit('.',1)[0]), infile.rsplit('.',1)[1]) or overwrite == 1:
             os.remove(infile)
@@ -633,7 +653,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
         if infile == '{}.{}'.format(os.path.join(sg.dirname, outtitle.rsplit('.',1)[0]), infile.rsplit('.',1)[1]) or overwrite == 1:
             os.remove(tmpfile)
             print 'delete tmp: {}'.format(tmpfile)
-        	
+
         # Cleanup the old *.png files
         for filename in glob('%s*.png' % infile):
             os.remove(filename)
@@ -645,7 +665,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
         actual_compression_ratio = 1 - float(output_filesize)/clipped_filesize
         compressed_pct = 1 - float(output_filesize)/input_filesize
 
-        if build_seektable:
+        if build_seektable and overwrite == 1:
             if jobid:
                 job.update({'status':job.RUNNING, 'comment':'Rebuilding seektable'})
             if debug:
@@ -712,9 +732,9 @@ def add_metadata(db=None, jobid=None, debug=False, job=None, rec=None, filetype=
                         castmembers = [castmember.name]
                     else:
                         castmembers.append(castmember.name)
-                
+
             if debug:
-                print 'directors: {}'.format(','.join(director)) 
+                print 'directors: {}'.format(','.join(director))
                 print 'cast members: {}'.format(','.join(castmembers))
             tmptitle = '{}'.format(rec.title.encode('utf-8').strip())
         if rec.season > 0 and rec.episode > 0:
@@ -741,12 +761,12 @@ def get_mediainfo(db=None, rec=None, filename=None, infosubtype='Duration', info
     duration_msecs = 0
     if filename is None:
         return -1
-    
+
     try:
         duration_msecs, e = task.communicate()
     except MythError, e:
         pass
-    
+
     if duration_msecs.strip() > 0:
         #duration_secs = float(duration_msecs/1000)
         #if debug:
@@ -755,8 +775,8 @@ def get_mediainfo(db=None, rec=None, filename=None, infosubtype='Duration', info
         return duration_msecs.strip(), e
     return -1, e
 
-def encode(jobid=None, db=None, job=None, 
-           procqueue=None, preset='slow', scaling='', burncc='', usemkv=0,
+def encode(jobid=None, db=None, job=None,
+           procqueue=None, preset='slow', scaling='', burncc='', usemkv=0, encoder='x264',
            vbitrate_param='-q 21',
            abitrate_param='--aencoder copy:ac3',
            tmpfile=None, outfile=None, statusfile=None):
@@ -767,13 +787,13 @@ def encode(jobid=None, db=None, job=None,
         # parameter to allow streaming content
         script = '{} {} --markers --detelecine --auto-anamorphic'.format(script, scaling)
         if usemkv == 1:
-            # use the Normal preset for MKV using h265
-            script = '{} --encoder x265 -Z "HQ 1080p30 Surround"'.format(script)
+            # use the HQ preset for MKV
+            script = '{} -P --encoder {} -Z "HQ 1080p30 Surround"'.format(script, encoder)
             # parameter to copy input subtitle streams into the output
             script = '{} -s 1'.format(script)
         else:
             # presets for h264 encode that effect encode speed/output filesize
-            script = '{} -O --encoder x264 --encopts {}'.format(script, preset)
+            script = '{} -O -P --encoder {} --encopts {}'.format(script, encoder, preset)
             # parameters to determine video encode target bitrate
             script = '{} {}'.format(script, vbitrate_param)
             # parameters to determine audio encode target bitrate
@@ -824,8 +844,12 @@ def main():
             help='Use sd to force the output to be SD dimentions')
     parser.add_option('--burncc', action='store', type='int', default=0, dest='burncc',
             help='Use burncc to burn the subtitle/cc into the video')
+    parser.add_option('-q', '--quality', action='store', type='int', default=crf, dest='quality',
+            help='Quality level - the lower the number, the higher the quality.')
     parser.add_option('--mkv', action='store', type='int', default=0, dest='usemkv',
             help='Use mkv instead of mp4')
+    parser.add_option('--enc', action='store', type='string', default='x264', dest='encoder',
+            help='set encoder to use: x264, x265, vp8, vp9. default is x264')
     parser.add_option('-v', '--verbose', action='store', type='string', dest='verbose',
             help='Verbosity level')
 
@@ -838,9 +862,9 @@ def main():
         MythLog._setlevel(opts.verbose)
 
     if len(args) == 1:
-        runjob(jobid=args[0], overwrite=opts.overwrite, sdonly=opts.sdonly, burncc=opts.burncc, usemkv=opts.usemkv)
+        runjob(jobid=args[0], overwrite=opts.overwrite, sdonly=opts.sdonly, quality=opts.quality, burncc=opts.burncc, usemkv=opts.usemkv, encoder=opts.encoder)
     elif opts.chanid and opts.starttime and opts.tzoffset is not None:
-        runjob(chanid=opts.chanid, starttime=opts.starttime, tzoffset=opts.tzoffset, overwrite=opts.overwrite, sdonly=opts.sdonly, burncc=opts.burncc, usemkv=opts.usemkv)
+        runjob(chanid=opts.chanid, starttime=opts.starttime, tzoffset=opts.tzoffset, overwrite=opts.overwrite, sdonly=opts.sdonly, quality=opts.quality, burncc=opts.burncc, usemkv=opts.usemkv, encoder=opts.encoder)
     else:
         print 'Script must be provided jobid, or chanid, starttime and timezone offset.'
         sys.exit(1)
