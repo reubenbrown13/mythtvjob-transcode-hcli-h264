@@ -380,6 +380,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
                 if jobid:
                     job.update({'status':job.ERRORED, 'comment':'Removal of commercial Cutlist failed'})
                 sys.exit(e.retcode)
+            # TODO: Need to regen keyframe index?
         else:
             if debug:
                 print 'Creating temporary file for transcoding.'
