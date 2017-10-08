@@ -328,9 +328,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
                 job.update({'status':job.RUNNING, 'comment':'Generating Cutlist for commercial removal'})
             task = System(path='mythutil', db=db)
             try:
-                output = task('--gencutlist',
-                              '--chanid "%s"' % chanid,
-                              '--starttime "%s"' % starttime)
+                output = task('--gencutlist --chanid "{}" --starttime "{}"').format(chanid, starttime)
             except MythError, e:
                 print 'Command "mythutil --gencutlist" failed with output:\n%s' % e.stderr
                 if jobid:
@@ -339,19 +337,15 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
 
         # Lossless transcode to strip cutlist
         if generate_commcutlist or rec.cutlist==1:
-            copyfile('%s' % infile, '%s.old' % infile)
+            os.rename('{}', '{}.old').format(infile, tmpfile)
+            infile = os.path.join(sg.dirname, '{}.old').format(tmpfile)
             if debug:
                 print 'Removing Cutlist'
             if jobid:
                 job.update({'status':job.RUNNING, 'comment':'Removing Cutlist'})
             task = System(path='mythtranscode', db=db)
             try:
-                output = task('--chanid "%s"' % chanid,
-                              '--starttime "%s"' % starttime,
-                              '--mpeg2',
-                              '--honorcutlist',
-                              '-o "%s"' % tmpfile,
-                              '1>&2')
+                output = task('--chanid "{}" --starttime "{}" --mpeg2 --honorcutlist -o "{}" 1>&2').format(chanid, starttime, tmpfile)
                 clipped_filesize = os.path.getsize(tmpfile)
                 clipped_bytes = input_filesize - clipped_filesize
                 clipped_compress_pct = float(clipped_bytes)/input_filesize
@@ -359,34 +353,33 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
                 rec.filesize=clipped_filesize
                 rec.update()
             except MythError, e:
-                print 'Command "mythtranscode --honorcutlist" failed with output:\n%s' % e.stderr
+                print 'Command "mythtranscode --honorcutlist" failed with output:\n{}'.format(e.stderr)
                 if jobid:
-                    job.update({'status':job.ERRORED, 'comment':'Removing Cutlist failed. Copying file instead.'})
+                    job.update({'status':job.ERRORED, 'comment':'Removing cutlist failed. Copying file instead.'})
                 copyfile('%s' % infile, '%s' % tmpfile)
                 clipped_filesize = input_filesize
                 clipped_bytes = 0
                 clipped_compress_pct = 0
                 pass
 
+            flush_commskip = True
+
             if jobid:
-                job.update({'status':job.RUNNING, 'comment':'Remove Cutlist from program'})
-            task = System(path='mythutil', db=db)
+                job.update({'status':job.RUNNING, 'comment':'Rebuild keyframe index in program'})
+            task = System(path='mythtranscode', db=db)
             try:
-                output = task('--clearcutlist',
-                              '--chanid "%s"' % chanid,
-                              '--starttime "%s"' % starttime)
+                output = task('--mpeg2 --buildindex --allkeys --infile "{}}"').format(tmpfile)
             except MythError, e:
-                print 'Command "mythutil --clearcutlist" failed with output:\n%s' % e.stderr
+                print 'Command "mythtranscode --buildindex" failed with output:\n{}'.format(e.stderr)
                 if jobid:
-                    job.update({'status':job.ERRORED, 'comment':'Removal of commercial Cutlist failed'})
+                    job.update({'status':job.ERRORED, 'comment':'Rebuilding of keyframe index failed'})
                 sys.exit(e.retcode)
-            # TODO: Need to regen keyframe index?
         else:
             if debug:
                 print 'Creating temporary file for transcoding.'
             if jobid:
                 job.update({'status':job.RUNNING, 'comment':'Creating temporary file for transcoding.'})
-            copyfile('%s' % infile, '%s' % tmpfile)
+            copyfile('{}', '{}').format(infile,tmpfile)
             clipped_filesize = input_filesize
             clipped_bytes = 0
             clipped_compress_pct = 0
@@ -815,8 +808,9 @@ def encode(jobid=None, db=None, job=None,
         #TODO: if failure, need to return a failure code to abort the rest of the script.
         if jobid:
             job.update({'status':job.ERRORED, 'comment':'Transcoding to {} failed'.format(filetype)})
-        procqueue.put(CleanExit)
-        sys.exit(e.retcode)
+        if overwrite == 1: # if overwriting the original file, need to exit on error. else keep going
+            procqueue.put(CleanExit)
+            sys.exit(e.retcode)
 
 def PrintException():
     exc_type, exc_obj, tb = sys.exc_info()
