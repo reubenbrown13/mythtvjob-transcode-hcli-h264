@@ -100,8 +100,8 @@ hdvideo_max_bitrate = 5500  # 0 = disable or (kBits_per_sec,kbps)
 hdvideo_min_bitrate = 0     # 0 = disable or (kBits_per_sec,kbps)
 
 # set max width and height for HD programs
-maxWidth = 1280
-maxHeight = 720
+maxWidth = 1920
+maxHeight = 1080
 
 # number of seconds of video that can be held in playing device video buffers (typically 2-5 secs)
 NUM_SECS_VIDEO_BUF=3        # secs
@@ -376,7 +376,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
                 if jobid:
                     job.update({'status':job.ERRORED, 'comment':'Clearing the commercial Cutlist failed'})
                 sys.exit(e.retcode)
-            
+
             if jobid:
                 job.update({'status':job.RUNNING, 'comment':'Rebuild keyframe index in program'})
             task = System(path='mythtranscode', db=db)
@@ -399,10 +399,13 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
             clipped_compress_pct = 0
 
         if infile != '{}.{}'.format(outfile.rsplit('.',1)[0],infile.rsplit('.',1)[1]):
-            rec.basename = os.path.basename('{}.{}'.format(outfile.rsplit('.',1)[0], infile.rsplit('.',1)[1]))
-            if os.path.isfile(rec.basename):
-                rec.basename = os.path.basename('{}-{}.{}'.format(outfile.rsplit('.',1)[0],str(rec.starttime.strftime("%Y%m%d")), infile.rsplit('.',1)[1]))
-                #outfile = rec.basename
+            origfilename = rec.basename
+            newfilename = os.path.basename('{}.{}'.format(outfile.rsplit('.',1)[0], infile.rsplit('.',1)[1]))
+            rec.basename = newfilename
+            if os.path.isfile(newfilename) and origfilename != newfilename:
+                newfilename = os.path.basename('{}-{}.{}'.format(outfile.rsplit('.',1)[0],str(rec.starttime.strftime("%Y%m%d")), infile.rsplit('.',1)[1]))
+                rec.basename = newfilename
+                # outfile = newfilename
             rec.update()
 
         #TODO : create new function for the work of rendering the file so it can be called twice in the case of an HD and SD dual rendering.
@@ -442,8 +445,8 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
                 maxWidth = int(vidwidth)
                 maxHeight = int(vidheight)
                 scaling = "--maxHeight {} --maxWidth {}".format(maxHeight,maxWidth)
-            if debug:
-                print 'Stream is HD'
+                if debug:
+                    print 'Stream is HD'
             isHD = True
         elif sdonly > 0:
             isHD = False
@@ -514,7 +517,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
         # HandBrakeCLI output is redirected to the temporary file tmpstatusfile and
         # a second thread continuously reads this file while
         # the transcode is in-process. see while loop below for the monitoring thread
-        tf = tempfile.NamedTemporaryFile(suffix='log',dir='/media/mythtv1/tmp/hcli-x264/',delete=True)
+        tf = tempfile.NamedTemporaryFile(suffix='log',dir='/media/mythtv1/tmp/hcli-x264/',delete=False)
         tmpstatusfile = tf.name
         if debug:
             print 'Using temporary file "%s" for HandBrakeCLI status updates.' % tmpstatusfile
@@ -648,6 +651,8 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
         # Add Metadata to outfile based on the data in the rec object
         add_metadata(db, jobid, debug, job, rec, filetype, outfile)
 
+        newoutfile = '{} ({}_{}).{}'.format(outfile.rsplit('.',1)[0], encoder, scaling.rsplit(' ',1)[1], outfile.rsplit('.',1)[1])
+        os.rename(outfile, newoutfile)
         #replace the original infile with the tmp file, so remove the infile
         if infile != '{}.{}'.format(os.path.join(sg.dirname, outtitle.rsplit('.',1)[0]), infile.rsplit('.',1)[1]) or overwrite == 1:
             os.remove(infile)
@@ -785,21 +790,24 @@ def encode(jobid=None, db=None, job=None,
         script = 'nice -n {} {} -i "{}"'.format(NICELEVEL, transcoder, tmpfile)
         # parameter to allow streaming content
         script = '{} {} --markers --detelecine --auto-anamorphic'.format(script, scaling)
-        if usemkv == 1:
-            # use the HQ preset for MKV
+        if usemkv == 1 or encoder == 'x265' :
+            # use the HQ preset for MKV or x265
             script = '{} -P --encoder {} -Z "HQ 1080p30 Surround"'.format(script, encoder)
             # parameter to copy input subtitle streams into the output
             script = '{} -s 1'.format(script)
         else:
             # presets for h264 encode that effect encode speed/output filesize
-            script = '{} -O -P --encoder {} --encopts {}'.format(script, encoder, preset)
-            # parameters to determine video encode target bitrate
-            script = '{} {}'.format(script, vbitrate_param)
+            # USES OPENCL with the -P script = '{} -O -P --encoder {} --encopts {}'.format(script, encoder, preset)
+            script = '{} -O --encoder {} --encopts {}'.format(script, encoder, preset)
             # parameters to determine audio encode target bitrate
             script = '{} {}'.format(script, abitrate_param)
             # parameter to copy input subtitle streams into the output
             script = '{} -s 1 {}'.format(script, burncc)
+        # parameters to determine video encode target bitrate
+        script = '{} {}'.format(script, vbitrate_param)
         # output file parameter
+        print 'Scaling: {}. height: {}'.format(scaling, scaling.rsplit(' ',1)[0])
+        # outfile = '{} ({}_{}).{}'.format(outfile.rsplit('.',1)[0], encoder, scaling.rsplit(' ',1)[1], outfile.rsplit('.',1)[1])
         script = '{} -o "{}"'.format(script, outfile)
         # redirection of output to temporaryfile
         script = '{} > {} 2>&1 < /dev/null'.format(script, statusfile)
@@ -837,7 +845,7 @@ def main():
             help='Use starttime with both chanid and tzoffset for manual operation')
     parser.add_option('--tzoffset', action='store', type='int', dest='tzoffset',
             help='Use tzoffset with both chanid and starttime for manual operation')
-    parser.add_option('--overwrite', action='store', type='int', default=1, dest='overwrite',
+    parser.add_option('--overwrite', action='store', type='int', default=0, dest='overwrite',
             help='Use overwrite to force the output to replace the original file')
     parser.add_option('--sd', action='store', type='int', default=0, dest='sdonly',
             help='Use sd to force the output to be SD dimentions')
@@ -847,6 +855,10 @@ def main():
             help='Quality level - the lower the number, the higher the quality.')
     parser.add_option('--mkv', action='store', type='int', default=0, dest='usemkv',
             help='Use mkv instead of mp4')
+    parser.add_option('--mw', action='store', type='int', default=maxWidth, dest='maxWidth',
+            help='Set the max width for the output.')
+    parser.add_option('--mh', action='store', type='int', default=maxHeight, dest='maxHeight',
+            help='Set the max height for the output.')
     parser.add_option('--enc', action='store', type='string', default='x264', dest='encoder',
             help='set encoder to use: x264, x265, vp8, vp9. default is x264')
     parser.add_option('-v', '--verbose', action='store', type='string', dest='verbose',
@@ -861,9 +873,9 @@ def main():
         MythLog._setlevel(opts.verbose)
 
     if len(args) == 1:
-        runjob(jobid=args[0], overwrite=opts.overwrite, sdonly=opts.sdonly, quality=opts.quality, burncc=opts.burncc, usemkv=opts.usemkv, encoder=opts.encoder)
+        runjob(jobid=args[0], overwrite=opts.overwrite, sdonly=opts.sdonly, quality=opts.quality, burncc=opts.burncc, usemkv=opts.usemkv, maxWidth=opts.maxWidth, maxHeight=opts.maxHeight, encoder=opts.encoder)
     elif opts.chanid and opts.starttime and opts.tzoffset is not None:
-        runjob(chanid=opts.chanid, starttime=opts.starttime, tzoffset=opts.tzoffset, overwrite=opts.overwrite, sdonly=opts.sdonly, quality=opts.quality, burncc=opts.burncc, usemkv=opts.usemkv, encoder=opts.encoder)
+        runjob(chanid=opts.chanid, starttime=opts.starttime, tzoffset=opts.tzoffset, overwrite=opts.overwrite, sdonly=opts.sdonly, quality=opts.quality, burncc=opts.burncc, usemkv=opts.usemkv, maxWidth=opts.maxWidth, maxHeight=opts.maxHeight, encoder=opts.encoder)
     else:
         print 'Script must be provided jobid, or chanid, starttime and timezone offset.'
         sys.exit(1)
