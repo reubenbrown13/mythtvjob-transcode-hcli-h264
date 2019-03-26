@@ -133,10 +133,10 @@ preset_nonHD = 'slow'
 crf = '21'
 
 # if HD, copy input audio streams to the output audio streams
-abitrate_param_HD='--aencoder av_aac,copy:ac3'
+abitrate_param_HD='--all-audio --aencoder av_aac,copy:ac3'
 
 # if non-HD, encode audio to AAC with libfdk_aac at a bitrate of 128kbps
-abitrate_param_nonHD = '--aencoder copy:aac --mixdown stereo'
+abitrate_param_nonHD = '--all-audio --aencoder copy:aac --mixdown stereo'
 
 # to convert non-HD audio to AAC using HandBrakeCLI's aac encoder
 #abitrate_param_nonHD='-strict -2'
@@ -517,7 +517,7 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
         # HandBrakeCLI output is redirected to the temporary file tmpstatusfile and
         # a second thread continuously reads this file while
         # the transcode is in-process. see while loop below for the monitoring thread
-        tf = tempfile.NamedTemporaryFile(suffix='log',dir='/media/mythtv1/tmp/hcli-x264/',delete=False)
+        tf = tempfile.NamedTemporaryFile(suffix='.log',dir='/media/mythtv1/tmp/hcli-x264/',delete=False)
         tmpstatusfile = tf.name
         if debug:
             print 'Using temporary file "%s" for HandBrakeCLI status updates.' % tmpstatusfile
@@ -672,13 +672,15 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
         actual_compression_ratio = 1 - float(output_filesize)/clipped_filesize
         compressed_pct = 1 - float(output_filesize)/input_filesize
 
-        if build_seektable and overwrite == 1:
+        # if build_seektable and overwrite == 1:
+        if build_seektable:
             if jobid:
                 job.update({'status':job.RUNNING, 'comment':'Rebuilding seektable'})
             if debug:
                 print 'Rebuilding seektable'
             task = System(path='mythcommflag')
             task.command('--chanid {} --starttime {} --rebuild 2> /dev/null').format(chanid, starttime)
+            # task.command('--file {} --rebuild 2> /dev/null').format(outfile)
 
         if overwrite == 1:
             # fix during in the recorded markup table this will be off if commercials are removed
@@ -792,7 +794,7 @@ def encode(jobid=None, db=None, job=None,
         script = '{} {} --markers --detelecine --auto-anamorphic'.format(script, scaling)
         if usemkv == 1 or encoder == 'x265' :
             # use the HQ preset for MKV or x265
-            script = '{} -P --encoder {} -Z "HQ 1080p30 Surround"'.format(script, encoder)
+            script = '{} --encoder {} -Z "HQ 1080p30 Surround"'.format(script, encoder)
             # parameter to copy input subtitle streams into the output
             script = '{} -s 1'.format(script)
         else:
