@@ -674,14 +674,8 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
 
         # if build_seektable and overwrite == 1:
         if build_seektable:
-            if jobid:
-                job.update({'status':job.RUNNING, 'comment':'Rebuilding seektable'})
-            if debug:
-                print 'Rebuilding seektable'
-            task = System(path='mythcommflag')
-            task.command('--chanid {} --starttime {} --rebuild 2> /dev/null').format(chanid, starttime)
-            # task.command('--file {} --rebuild 2> /dev/null').format(outfile)
-
+            mythcommflag(db, jobid, debug, job, rec, rec.basename)
+            
         if overwrite == 1:
             # fix during in the recorded markup table this will be off if commercials are removed
             duration_msecs, e = get_mediainfo(db, rec, outfile, 'Duration')
@@ -712,6 +706,33 @@ def runjob(jobid=None, chanid=None, starttime=None, tzoffset=None, maxWidth=maxW
         if jobid:
             job.update({'status':job.ERRORED, 'comment':'Error when executing the transcode. Job aborted.'})
         sys.exit()
+
+# DEFINE function to run mythcommflag for the supplied file
+def mythcommflag(db=None, jobid=None, debug=False, job=None, rec=None, filename=None, flagapp='/usr/bin/mythcommflag'):
+    if debug:
+        print 'Rebuilding seektable for {}'.format(filename)
+    if jobid:
+        progress_str = 'Rebuilding seektable for {}'.format(filename)
+        job.update({'status':job.RUNNING, 'comment': progress_str})
+        
+    task = subprocess.Popen('{} --file "{}" --rebuild 2> /dev/null'.format(flagapp, filename), stdout=subprocess.PIPE, shell=True)
+    # task = subprocess.Popen('{} --chanid {} --starttime {} --rebuild 2> /dev/null'.format(flagapp,rec.chanid, rec.starttime), stdout=subprocess.PIPE, shell=True)
+    duration_msecs = 0
+    if filename is None:
+        return -1
+
+    try:
+        duration_msecs, e = task.communicate()
+    except MythError, e:
+        pass
+
+    if duration_msecs.strip() > 0:
+        #duration_secs = float(duration_msecs/1000)
+        #if debug:
+            #print 'Duration in seconds "%s"' % duration_secs
+            #print 'Duration in milliseconds "%s"' % duration_msecs
+        return duration_msecs.strip(), e
+    return -1, e
 
 # DEFINE function to store metadata for the outfile.
 def add_metadata(db=None, jobid=None, debug=False, job=None, rec=None, filetype='mkv', filename=None, metaapp='/usr/bin/AtomicParsley'):
